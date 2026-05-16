@@ -1,0 +1,63 @@
+server:
+  servlet:
+    encoding:
+      charset: UTF-8
+      force-response: true
+
+spring:
+  application:
+    name: ms-security-bff
+  jackson:
+    time-zone: America/Lima        # serialización JSON de tipos Date/Calendar
+  datasource:
+    url: jdbc:postgresql://localhost:5432/poc-security
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:Admin2024}
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    # data.sql se ejecuta DESPUÉS de que Hibernate cree las tablas.
+    defer-datasource-initialization: true
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: sec
+        jdbc:
+          time_zone: America/Lima  # binding JDBC de TIMESTAMP
+  sql:
+    init:
+      # always: ejecuta schema.sql + data.sql en cada arranque.
+      mode: always
+      platform: postgres
+      continue-on-error: false
+
+security:
+  jwt:
+    # En producción cargar desde variable de entorno o Vault. >= 32 bytes (256 bits) para HS256.
+    secret: ${SECURITY_JWT_SECRET:0123456789-abcdefghij-klmnopqrst-uvwxyz0123-CHANGEME}
+    issuer: ${SECURITY_JWT_ISSUER:ms-security-bff}
+    access-ttl-minutes: 15
+    refresh-ttl-minutes: 10080  # 7 días
+
+  ratelimit:
+    enabled: true
+    # IPs que se saltan el rate-limit (health checks internos, CI, oficina).
+    whitelist-ips:
+      #- 127.0.0.1
+      # - 0:0:0:0:0:0:0:1
+    policies:
+      login:
+        path-pattern: /auth/login
+        capacity: 5
+        refill-period: PT1M       # 5 req / minuto por IP
+        keyed-by: IP
+      refresh:
+        path-pattern: /auth/refresh
+        capacity: 10
+        refill-period: PT1M
+        keyed-by: IP
+      otp-verify:
+        path-pattern: /auth/otp/verify
+        capacity: 3
+        refill-period: PT5M       # 3 req / 5 min por usuario
+        keyed-by: USER_ID

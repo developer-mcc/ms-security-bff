@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!--
+      Configuración de logging para BFF Seguridad.
+      - Profile 'dev' (o sin perfil activo): salida humana legible en consola.
+      - Profile 'prod' (o cualquier otro): salida JSON estructurada con MDC.
+
+      Las claves del MDC (traceId, spanId, userId, username, empresaId, sucursalId)
+      las pone MdcFilter + TenantResolverFilter en cada request.
+    -->
+
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="ms-security-bff"/>
+
+    <!-- ========================================================== -->
+    <!-- Appender humano (desarrollo)                                -->
+    <!-- ========================================================== -->
+    <appender name="STDOUT_HUMAN" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [%X{traceId:-}] [%X{username:-}@%X{empresaId:-}] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ========================================================== -->
+    <!-- Appender JSON estructurado (producción / observabilidad)    -->
+    <!-- JsonEncoder viene en logback-classic 1.5+                   -->
+    <!-- ========================================================== -->
+    <appender name="STDOUT_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
+            <withSequenceNumber>false</withSequenceNumber>
+            <withMessage>true</withMessage>
+            <withMDC>true</withMDC>
+            <withMarkers>false</withMarkers>
+            <withArguments>false</withArguments>
+            <withFormattedMessage>true</withFormattedMessage>
+            <withLoggerName>true</withLoggerName>
+            <withThreadName>true</withThreadName>
+            <withLevel>true</withLevel>
+            <withException>true</withException>
+        </encoder>
+    </appender>
+
+    <!-- ========================================================== -->
+    <!-- Selección por perfil                                        -->
+    <!-- ========================================================== -->
+    <springProfile name="dev | local | default">
+        <root level="INFO">
+            <appender-ref ref="STDOUT_HUMAN"/>
+        </root>
+        <logger name="pe.com.mcc.security" level="DEBUG"/>
+    </springProfile>
+
+    <springProfile name="!dev &amp; !local &amp; !default">
+        <root level="INFO">
+            <appender-ref ref="STDOUT_JSON"/>
+        </root>
+        <logger name="pe.com.mcc.security" level="INFO"/>
+        <logger name="org.hibernate.SQL" level="WARN"/>
+        <logger name="org.springframework.security" level="WARN"/>
+    </springProfile>
+
+</configuration>

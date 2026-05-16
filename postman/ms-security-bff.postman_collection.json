@@ -1,0 +1,1062 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-0002-4000-9000-ms-security-bff",
+    "name": "MS Security BFF",
+    "description": "Colección para probar todos los endpoints de autenticación del BFF Seguridad.\n\n**Base URL**: http://localhost:8080\n\n**Credenciales demo**: todos los usuarios usan `Demo2026!`. La data se carga sola al arrancar (data.sql).\n\n## Cómo usar\n1. Levanta la app (`./gradlew bootRun`).\n2. Ejecuta `0. Health` para verificar que está arriba.\n3. En `1. Login` (cualquier empresa), ejecuta el usuario que quieras — tokens y perfil se guardan automáticamente.\n4. Ejecuta `Refresh`, `GET /auth/me`, `Logout`, etc. — usan los tokens guardados.\n5. La carpeta `5. Casos negativos` cubre flujos de error con assertions.\n6. La carpeta `6. Rate limit` prueba el límite de 5 req/min en `/auth/login`.\n\n## Encoding\nTodas las respuestas de error usan `application/problem+json` con UTF-8. Los tests de las carpetas 4–6 verifican que los textos en español (tildes, ñ) lleguen sin mojibake.\n\n## Zona horaria\nLa aplicación opera en `America/Lima` (UTC-5). Los timestamps en respuestas reflejan esa zona.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",          "value": "http://localhost:8080", "type": "string" },
+    { "key": "accessToken",      "value": "",                     "type": "string" },
+    { "key": "refreshToken",     "value": "",                     "type": "string" },
+    { "key": "sesionId",         "value": "",                     "type": "string" },
+    { "key": "perfilUsuarioId",  "value": "",                     "type": "string" },
+    { "key": "sucursalActiva",   "value": "",                     "type": "string" },
+    { "key": "currentUser",      "value": "",                     "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "item": [
+        {
+          "name": "Actuator health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            },
+            "description": "Verifica que la app está arriba antes de probar el resto."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "1. Login - Botica San Juan",
+      "description": "Cinco usuarios de la empresa Botica San Juan, uno por rol.",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('accessToken',  body.accessToken);",
+              "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+              "pm.collectionVariables.set('sesionId',     body.sesionId);",
+              "pm.collectionVariables.set('currentUser',  body.tokenType);",
+              "",
+              "pm.test('tokens emitidos correctamente', () => {",
+              "  pm.expect(body.accessToken).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.refreshToken).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.sesionId).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.tokenType).to.eql('Bearer');",
+              "});",
+              "pm.test('login no expone datos de perfil', () => {",
+              "  pm.expect(body).to.not.have.property('perfil');",
+              "  pm.expect(body).to.not.have.property('correo');",
+              "  pm.expect(body).to.not.have.property('nombres');",
+              "});",
+              "",
+              "try {",
+              "  const payloadB64 = body.accessToken.split('.')[1];",
+              "  const payload = JSON.parse(atob(payloadB64.replace(/-/g,'+').replace(/_/g,'/')));",
+              "  console.log('JWT claims:', payload);",
+              "  pm.collectionVariables.set('perfilUsuarioId', payload.sub);",
+              "  pm.collectionVariables.set('sucursalActiva',  payload.suc || '');",
+              "  pm.test('claim sid == sesionId', () => pm.expect(payload.sid).to.eql(body.sesionId));",
+              "  pm.test('claim perms presente',  () => pm.expect(payload.perms).to.be.an('object'));",
+              "} catch (e) { console.warn('No se pudo decodificar JWT:', e); }"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "admin.bsj  (ADMIN_EMPRESA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"admin.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "jefe.bsj.centro  (ADMIN_SUCURSAL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"jefe.bsj.centro\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "farma.bsj  (FARMACEUTICO)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"farma.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "cajero.bsj  (CAJERO)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"cajero.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "auditor.bsj  (AUDITOR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"auditor.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Login - Farmacia Vida",
+      "description": "Cinco usuarios de la empresa Farmacia Vida, uno por rol.",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('accessToken',  body.accessToken);",
+              "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+              "pm.collectionVariables.set('sesionId',     body.sesionId);",
+              "pm.test('login no expone datos de perfil', () => {",
+              "  pm.expect(body).to.not.have.property('perfil');",
+              "});",
+              "try {",
+              "  const payload = JSON.parse(atob(body.accessToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));",
+              "  console.log('JWT claims:', payload);",
+              "  pm.collectionVariables.set('perfilUsuarioId', payload.sub);",
+              "  pm.collectionVariables.set('sucursalActiva',  payload.suc || '');",
+              "} catch (e) {}"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "admin.fv  (ADMIN_EMPRESA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"admin.fv\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "jefe.fv.plaza  (ADMIN_SUCURSAL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"jefe.fv.plaza\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "farma.fv  (FARMACEUTICO)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"farma.fv\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "cajero.fv  (CAJERO)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"cajero.fv\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "auditor.fv  (AUDITOR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"auditor.fv\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Login - SUPER_ADMIN",
+      "item": [
+        {
+          "name": "superadmin  (multiempresa, recurso='*')",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken',  body.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "pm.collectionVariables.set('sesionId',     body.sesionId);",
+                  "pm.test('login no expone datos de perfil', () => {",
+                  "  pm.expect(body).to.not.have.property('perfil');",
+                  "});",
+                  "try {",
+                  "  const payload = JSON.parse(atob(body.accessToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));",
+                  "  console.log('SUPER_ADMIN claims:', payload);",
+                  "  pm.collectionVariables.set('perfilUsuarioId', payload.sub);",
+                  "  pm.test('comodín * en perms', () => pm.expect(payload.perms).to.have.property('*'));",
+                  "  pm.test('roles contiene SUPER_ADMIN', () => pm.expect(payload.roles).to.include('SUPER_ADMIN'));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Device-Fingerprint", "value": "postman-{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"superadmin\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Refresh & Logout",
+      "item": [
+        {
+          "name": "Refresh (rotación con misma sesion_id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const previousSesion = pm.collectionVariables.get('sesionId');",
+                  "pm.collectionVariables.set('accessToken',  body.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "pm.test('sesion_id se mantiene tras rotación', () => {",
+                  "  pm.expect(body.sesionId).to.eql(previousSesion);",
+                  "});",
+                  "pm.test('refresh no incluye perfil (TokenResponse)', () => {",
+                  "  pm.expect(body).to.not.have.property('perfil');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth","refresh"] },
+            "description": "Marca el refresh anterior con motivo `REFRESH_USED` y emite un nuevo par bajo la **misma `sesion_id`**."
+          }
+        },
+        {
+          "name": "Logout (cierra sesión actual)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth","logout"] },
+            "description": "Revoca todos los tokens activos (access + refresh) de la `sesion_id` actual con un solo `UPDATE`."
+          }
+        },
+        {
+          "name": "Logout-all (todos los dispositivos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/logout-all", "host": ["{{baseUrl}}"], "path": ["auth","logout-all"] },
+            "description": "Revoca **todas las sesiones activas** del usuario (motivo `LOGOUT_ALL`)."
+          }
+        },
+        {
+          "name": "Switch-branch a sucursal habilitada (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const previousSesion = pm.collectionVariables.get('sesionId');",
+                  "pm.collectionVariables.set('accessToken',  body.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "pm.collectionVariables.set('sesionId',     body.sesionId);",
+                  "pm.test('sesion_id NUEVA (no reusa la anterior)', () => {",
+                  "  pm.expect(body.sesionId).to.not.eql(previousSesion);",
+                  "});",
+                  "pm.test('switch-branch no incluye perfil (TokenResponse)', () => {",
+                  "  pm.expect(body).to.not.have.property('perfil');",
+                  "});",
+                  "try {",
+                  "  const payload = JSON.parse(atob(body.accessToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));",
+                  "  console.log('Nueva sucursal activa:', payload.suc);",
+                  "  pm.test('claim suc apunta a la nueva sucursal', () => {",
+                  "    pm.expect(payload.suc).to.eql('aaaa2222-aaaa-2222-aaaa-222222222222');",
+                  "  });",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/switch-branch/aaaa2222-aaaa-2222-aaaa-222222222222",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","switch-branch","aaaa2222-aaaa-2222-aaaa-222222222222"]
+            },
+            "description": "Login previo: `admin.bsj` (Centro y Norte habilitadas). Cambia a la sucursal **Norte**."
+          }
+        },
+        {
+          "name": "Switch-branch a sucursal NO autorizada (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('ProblemDetail branch-not-authorized', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.include('branch-not-authorized');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/switch-branch/bbbb1111-bbbb-1111-bbbb-111111111111",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","switch-branch","bbbb1111-bbbb-1111-bbbb-111111111111"]
+            },
+            "description": "Login previo: `admin.bsj`. Intento de cambiar a **Farmacia Vida - Plaza** (otra empresa). Resultado esperado: 403."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Gestión de usuarios (verifica @PreAuthorize 3D)",
+      "description": "Endpoints protegidos con hasPermission(...) del ThreeDPermissionEvaluator.\n\n**Antes de ejecutar**: hacer login con un usuario que tenga el permiso adecuado.\n\n| Rol | USER:READ | USER:CREATE |\n|---|---|---|\n| SUPER_ADMIN | ✅ | ✅ |\n| ADMIN_EMPRESA | ✅ ALL_BRANCHES | ✅ ALL_BRANCHES |\n| ADMIN_SUCURSAL | ✅ OWN_BRANCH | ✅ OWN_BRANCH |\n| AUDITOR | ✅ ALL_BRANCHES | ❌ |\n| FARMACEUTICO / CAJERO | ❌ | ❌ |",
+      "item": [
+        {
+          "name": "Listar usuarios (admin/auditor → 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('respuesta es array', () => pm.expect(body).to.be.an('array'));",
+                  "console.log('Usuarios devueltos:', body.length);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/usuarios", "host": ["{{baseUrl}}"], "path": ["usuarios"] }
+          }
+        },
+        {
+          "name": "Listar usuarios de otra empresa (?empresaId=...)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('respuesta esperada (200 o 403)', () => {",
+                  "  pm.expect([200, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/usuarios?empresaId=22222222-2222-2222-2222-222222222222",
+              "host": ["{{baseUrl}}"],
+              "path": ["usuarios"],
+              "query": [{ "key": "empresaId", "value": "22222222-2222-2222-2222-222222222222" }]
+            }
+          }
+        },
+        {
+          "name": "Crear usuario (admin → 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('id generado', () => pm.expect(body.id).to.be.a('string'));",
+                  "pm.test('estado ACTIVO', () => pm.expect(body.estado).to.eql('ACTIVO'));",
+                  "console.log('Usuario creado:', body.nombreUsuario, '->', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"empresaId\": \"11111111-1111-1111-1111-111111111111\",\n  \"nombreUsuario\": \"nuevo.cajero.{{$randomInt}}\",\n  \"correo\": \"nuevo.{{$randomInt}}@bsj.com\",\n  \"contrasena\": \"Welcome2026!\",\n  \"nombres\": \"Nuevo\",\n  \"apellidos\": \"Cajero\",\n  \"dni\": \"70099999\",\n  \"telefono\": \"999099999\",\n  \"canalOtpPreferido\": \"EMAIL\",\n  \"mfaHabilitado\": true,\n  \"rolesIds\": [\"CAJERO\"],\n  \"sucursalesHabilitadas\": [\"aaaa1111-aaaa-1111-aaaa-111111111111\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/usuarios", "host": ["{{baseUrl}}"], "path": ["usuarios"] }
+          }
+        },
+        {
+          "name": "Listar - sin permisos (cajero.bsj → 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/usuarios", "host": ["{{baseUrl}}"], "path": ["usuarios"] }
+          }
+        },
+        {
+          "name": "Crear - sin permisos (auditor.bsj → 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"empresaId\": \"11111111-1111-1111-1111-111111111111\",\n  \"nombreUsuario\": \"intento.auditor\",\n  \"correo\": \"intento@bsj.com\",\n  \"contrasena\": \"Welcome2026!\",\n  \"nombres\": \"Intento\",\n  \"apellidos\": \"Auditor\",\n  \"rolesIds\": [\"CAJERO\"],\n  \"sucursalesHabilitadas\": [\"aaaa1111-aaaa-1111-aaaa-111111111111\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/usuarios", "host": ["{{baseUrl}}"], "path": ["usuarios"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Perfil del usuario (GET /auth/me)",
+      "description": "El perfil está disponible de dos formas:\n- **Al hacer login**: incluido en `body.perfil` del `LoginResponse`.\n- **En cualquier momento**: `GET /auth/me` con el access token vigente.",
+      "item": [
+        {
+          "name": "GET /auth/me — perfil propio (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('campos obligatorios presentes', () => {",
+                  "  pm.expect(body.usuarioId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.nombreUsuario).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.correo).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.nombres).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.apellidos).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.canalOtpPreferido).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.rol).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.sucursalesDisponibles).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('usuarioId coincide con el del login', () => {",
+                  "  const savedId = pm.collectionVariables.get('perfilUsuarioId');",
+                  "  if (savedId) pm.expect(body.usuarioId).to.eql(savedId);",
+                  "});",
+                  "",
+                  "pm.test('sin campos sensibles', () => {",
+                  "  pm.expect(body).to.not.have.property('contrasenaHash');",
+                  "  pm.expect(body).to.not.have.property('intentosFallidos');",
+                  "  pm.expect(body).to.not.have.property('bloqueadoHasta');",
+                  "});",
+                  "",
+                  "pm.test('sucursalesDisponibles son objetos válidos', () => {",
+                  "  body.sucursalesDisponibles.forEach(s => {",
+                  "    pm.expect(s.id).to.be.a('string');",
+                  "    pm.expect(s.nombre).to.be.a('string');",
+                  "    pm.expect(s.esPredeterminada).to.be.a('boolean');",
+                  "  });",
+                  "});",
+                  "",
+                  "console.log('Perfil /auth/me:', body);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth","me"] }
+          }
+        },
+        {
+          "name": "GET /auth/me — sin token (401 + ProblemDetail UTF-8)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "",
+                  "pm.test('Content-Type es application/problem+json', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail — estructura RFC 9457', () => {",
+                  "  pm.expect(body.status).to.eql(401);",
+                  "  pm.expect(body.type).to.include('authentication-required');",
+                  "  pm.expect(body.title).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.detail).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto (sin mojibake)', () => {",
+                  "  const raw = pm.response.text();",
+                  "  // Mojibake clásico de ISO-8859-1: 'ó' → 'Ã³', 'ó' → 'Ã³'",
+                  "  pm.expect(raw).to.not.include('\\u00c3');",
+                  "  pm.expect(raw).to.not.include('\\ufffd');",
+                  "  pm.expect(body.title).to.eql('Autenticaci\\u00f3n requerida');",
+                  "  pm.expect(body.detail).to.include('v\\u00e1lido');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth","me"] },
+            "description": "Sin Bearer token → `JwtAuthenticationFilter` rechaza y `JwtAuthenticationEntryPoint` escribe el ProblemDetail con encoding UTF-8."
+          }
+        },
+        {
+          "name": "GET /auth/me — tras switch-branch (sucursal actualizada)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const expectedSuc = 'aaaa2222-aaaa-2222-aaaa-222222222222';",
+                  "pm.test('sucursalActiva apunta a la nueva sucursal', () => {",
+                  "  pm.expect(body.sucursalActiva).to.eql(expectedSuc);",
+                  "});",
+                  "console.log('sucursalActivaNombre:', body.sucursalActivaNombre);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth","me"] },
+            "description": "Ejecutar **después** de `Switch-branch a sucursal habilitada`. Confirma que `sucursalActiva` refleja la nueva sucursal."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Casos negativos",
+      "item": [
+        {
+          "name": "Login - usuario inexistente (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail invalid-credentials', () => {",
+                  "  pm.expect(body.type).to.include('invalid-credentials');",
+                  "  pm.expect(body.status).to.eql(401);",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  const raw = pm.response.text();",
+                  "  pm.expect(raw).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"no.existe\",\n  \"contrasena\": \"Whatever123!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "Login - contraseña inválida (401 + incrementa intentosFallidos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"admin.bsj\",\n  \"contrasena\": \"WrongPassword!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "description": "Cada intento incrementa `intentos_fallidos`. A los 5 fallos el usuario queda BLOQUEADO 15 min."
+          }
+        },
+        {
+          "name": "Login - body inválido (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('errors contiene campos inválidos', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.errors).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"\",\n  \"contrasena\": \"\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "description": "Validación @NotBlank en LoginRequest → 400 con mapa `errors` del GlobalExceptionHandler."
+          }
+        },
+        {
+          "name": "Refresh - token inválido (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"eyJhbGciOiJIUzI1NiJ9.fake.signature\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth","refresh"] }
+          }
+        },
+        {
+          "name": "Logout - sin token (401 + ProblemDetail UTF-8)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "",
+                  "pm.test('Content-Type es application/problem+json', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail — estructura RFC 9457', () => {",
+                  "  pm.expect(body.status).to.eql(401);",
+                  "  pm.expect(body.type).to.include('authentication-required');",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto (sin mojibake)', () => {",
+                  "  const raw = pm.response.text();",
+                  "  pm.expect(raw).to.not.include('\\u00c3');",
+                  "  pm.expect(raw).to.not.include('\\ufffd');",
+                  "  pm.expect(body.title).to.eql('Autenticaci\\u00f3n requerida');",
+                  "  pm.expect(body.detail).to.include('v\\u00e1lido');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth","logout"] },
+            "description": "Sin token → `JwtAuthenticationEntryPoint` responde 401. Este test verifica que el body en español llega sin mojibake (fix de encoding UTF-8)."
+          }
+        },
+        {
+          "name": "Tras logout: token revocado (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('ProblemDetail token-revoked', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.include('token-revoked');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth","logout"] },
+            "description": "Ejecutar **después** de `Logout`. Confirma que el `JwtAuthenticationFilter` rechaza un `jti` revocado aunque la firma JWT siga siendo válida."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Rate limit",
+      "description": "Prueba el rate-limit de Bucket4j + Caffeine configurado en `application.yaml`.\n\n**Política `login`**: 5 requests / 1 min / IP.\n\n**Cómo ejecutar**:\n1. Espera 1 minuto (o reinicia la app) para tener el bucket lleno.\n2. Ejecuta `RL-01` a `RL-05` en secuencia rápida — cada uno debe responder 200 ó 401 (credenciales incorrectas, pero el request llega al controller).\n3. Ejecuta `RL-06 — 429 Too Many Requests` — el bucket está vacío y el `RateLimitFilter` intercepta antes del controller.\n4. Ejecuta `RL-07 — Headers X-RateLimit-*` para verificar los headers en condición normal (necesita esperar refill o usar otro endpoint).\n\n**Nota**: Si los tests de las carpetas anteriores ya gastaron intentos, RL-06 puede dispararse antes de RL-05.",
+      "item": [
+        {
+          "name": "RL-01: login intento 1 (200 ó 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bucket no agotado aún (200 ó 401, no 429)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "const remaining = pm.response.headers.get('X-RateLimit-Remaining');",
+                  "console.log('Remaining tras intento 1:', remaining);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "RL-02: login intento 2 (200 ó 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bucket no agotado aún (200 ó 401, no 429)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "RL-03: login intento 3 (200 ó 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bucket no agotado aún (200 ó 401, no 429)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "RL-04: login intento 4 (200 ó 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bucket no agotado aún (200 ó 401, no 429)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "RL-05: login intento 5 — agota el bucket",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('5to intento aún dentro del límite (200 ó 401)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "const remaining = pm.response.headers.get('X-RateLimit-Remaining');",
+                  "pm.test('X-RateLimit-Remaining == 0 (bucket vacío)', () => {",
+                  "  pm.expect(remaining).to.eql('0');",
+                  "});",
+                  "console.log('Remaining tras intento 5:', remaining);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] }
+          }
+        },
+        {
+          "name": "RL-06: login intento 6 → 429 Too Many Requests",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('429 Too Many Requests', () => pm.response.to.have.status(429));",
+                  "",
+                  "pm.test('Content-Type es application/problem+json', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "",
+                  "const retryAfter = pm.response.headers.get('Retry-After');",
+                  "pm.test('Retry-After presente y es número positivo', () => {",
+                  "  pm.expect(retryAfter).to.match(/^[1-9]\\d*$/);",
+                  "  console.log('Retry-After:', retryAfter, 's');",
+                  "});",
+                  "",
+                  "pm.test('X-RateLimit-Limit == 5 (política login)', () => {",
+                  "  pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.eql('5');",
+                  "});",
+                  "",
+                  "pm.test('X-RateLimit-Remaining == 0', () => {",
+                  "  pm.expect(pm.response.headers.get('X-RateLimit-Remaining')).to.eql('0');",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail rate-limit-exceeded — estructura RFC 9457', () => {",
+                  "  pm.expect(body.status).to.eql(429);",
+                  "  pm.expect(body.type).to.include('rate-limit-exceeded');",
+                  "  pm.expect(body.title).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.detail).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto en cuerpo 429', () => {",
+                  "  const raw = pm.response.text();",
+                  "  pm.expect(raw).to.not.include('\\u00c3');",
+                  "  pm.expect(raw).to.not.include('\\ufffd');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"rl.test\",\n  \"contrasena\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "description": "Ejecutar inmediatamente después de RL-05. El bucket está vacío → `RateLimitFilter` intercepta el request **antes** de que llegue al controller y responde 429 con headers `Retry-After`, `X-RateLimit-Limit` y `X-RateLimit-Remaining`."
+          }
+        },
+        {
+          "name": "RL-07: headers X-RateLimit-* en request normal (bucket lleno)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Esperar ~1 min tras RL-06 para que el bucket se recargue.",
+                  "pm.test('200 ó 401 (bucket recargado, no 429)', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('X-RateLimit-Limit presente', () => {",
+                  "  pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.eql('5');",
+                  "});",
+                  "",
+                  "pm.test('X-RateLimit-Remaining presente y entre 0 y 5', () => {",
+                  "  const r = parseInt(pm.response.headers.get('X-RateLimit-Remaining') || '-1');",
+                  "  pm.expect(r).to.be.within(0, 5);",
+                  "});",
+                  "",
+                  "pm.test('Retry-After NO presente (no es 429)', () => {",
+                  "  pm.expect(pm.response.headers.get('Retry-After')).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"admin.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "description": "Espera ~1 minuto después de RL-06 para que el bucket se recargue (política: 5 req/min). Verifica que los headers `X-RateLimit-*` están presentes en **toda** respuesta de un endpoint rate-limited, no solo en el 429."
+          }
+        }
+      ]
+    }
+  ]
+}

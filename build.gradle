@@ -1,0 +1,166 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.0.6'
+	id 'io.spring.dependency-management' version '1.1.7'
+
+	// Calidad de código (gratuitos / OSS):
+	//  - Spotless aplica formato automático con google-java-format.
+	//  - Checkstyle valida estilo (naming, imports, líneas) con config/checkstyle/checkstyle.xml.
+	//  - PMD detecta bugs reales, código muerto y antipatrones con config/pmd/pmd.xml.
+	id 'com.diffplug.spotless' version '7.0.4'
+	id 'checkstyle'
+	id 'pmd'
+}
+
+group = 'pe.com.mcc'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+
+	// AOP — usado por TenantFilterAspect (@Aspect, @Around).
+	// En Spring Boot 4 el BOM no expone 'spring-boot-starter-aop' por nombre;
+	// se declaran spring-aop + aspectjweaver directamente (versiones gestionadas por el BOM).
+	implementation 'org.springframework:spring-aop'
+	implementation 'org.aspectj:aspectjweaver'
+
+	// Jackson — necesario para AuditJsonSerializer y para JJWT (jjwt-jackson).
+	// Spring Boot 4 con starter-webmvc no lo trae transitivamente.
+	implementation 'org.springframework.boot:spring-boot-starter-json'
+
+	// JWT — JJWT 0.12.x (API + impl + Jackson serializer)
+	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+	runtimeOnly  'io.jsonwebtoken:jjwt-impl:0.12.6'
+	runtimeOnly  'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+	// Rate limiting — Bucket4j 8.x + Caffeine cache (in-memory store de buckets).
+	implementation 'com.bucket4j:bucket4j-core:8.10.1'
+	implementation 'com.bucket4j:bucket4j-caffeine:8.10.1'
+	implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+
+	compileOnly 'org.projectlombok:lombok'
+	runtimeOnly 'org.postgresql:postgresql'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testCompileOnly 'org.projectlombok:lombok'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testAnnotationProcessor 'org.projectlombok:lombok'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+bootRun {
+	jvmArgs = [
+		'-Duser.timezone=America/Lima'
+	]
+}
+
+// ====================================================================
+// Spotless: formateador automático
+//
+//   ./gradlew spotlessCheck   → falla el build si el formato no es correcto
+//   ./gradlew spotlessApply   → reformatea los archivos in-place
+//
+// `spotlessCheck` se enlaza automáticamente a `check`, así que `./gradlew check`
+// y `./gradlew build` validan el formato.
+// ====================================================================
+spotless {
+	java {
+		target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+		targetExclude 'build/**'
+
+		googleJavaFormat('1.27.0').reflowLongStrings()
+		removeUnusedImports()
+		trimTrailingWhitespace()
+		endWithNewline()
+
+		// No tocar líneas con marcadores de merge sin resolver
+		toggleOffOn()
+	}
+	groovyGradle {
+		target '*.gradle'
+		greclipse()
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
+	format 'misc', {
+		target '*.md', '.gitignore', '*.yaml', '*.yml'
+		targetExclude '**/build/**'
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
+}
+
+// ====================================================================
+// Checkstyle: validador estático
+//
+//   ./gradlew checkstyleMain    → valida src/main/java
+//   ./gradlew checkstyleTest    → valida src/test/java
+//   ./gradlew check             → ejecuta todo (test + spotless + checkstyle)
+//
+// El ruleset vive en config/checkstyle/checkstyle.xml y es deliberadamente
+// permisivo (solo reglas críticas de naming/imports/líneas) — se puede
+// endurecer progresivamente.
+// ====================================================================
+checkstyle {
+	toolVersion = '10.20.2'
+	configFile = file("${rootDir}/config/checkstyle/checkstyle.xml")
+	maxWarnings = 0
+	ignoreFailures = false
+	showViolations = true
+}
+
+tasks.withType(Checkstyle).configureEach {
+	reports {
+		xml.required = false
+		html.required = true
+	}
+}
+
+// ====================================================================
+// PMD: analizador estático de bugs y malas prácticas
+//
+//   ./gradlew pmdMain     → analiza src/main/java
+//   ./gradlew pmdTest     → analiza src/test/java
+//   ./gradlew check       → ejecuta todo (test + spotless + checkstyle + pmd)
+//
+// Ruleset en config/pmd/pmd.xml. Foco: bugs reales (ErrorProne), código
+// muerto (BestPractices), seguridad (Security), concurrencia (Multithreading)
+// y complejidad moderada (Design). Estilo cubierto por Spotless + Checkstyle.
+//
+// Suprimir falso positivo puntual:
+//   @SuppressWarnings("PMD.NombreDeLaRegla")      ← línea / método / clase
+// ====================================================================
+pmd {
+	toolVersion = '7.6.0'
+	consoleOutput = true
+	ignoreFailures = false
+	rulesMinimumPriority = 5
+	ruleSets = []                                          // desactiva rulesets por defecto
+	ruleSetFiles = files("${rootDir}/config/pmd/pmd.xml") // solo nuestro ruleset
+}
+
+tasks.withType(Pmd).configureEach {
+	reports {
+		xml.required = false
+		html.required = true
+	}
+}

@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Ruleset deliberadamente permisivo. Solo reglas críticas:
+      - Naming conventions (UpperCamelCase para tipos, lowerCamelCase para vars/métodos,
+        UPPER_SNAKE_CASE para constantes).
+      - Imports limpios (sin estrella, sin orden caótico, sin no-usados).
+      - Sin tabs (espacios solo).
+      - Líneas hasta 140 chars.
+      - Bloques con llaves obligatorias.
+      - Sin System.out.println productivo.
+
+    Reglas que NO se incluyen aquí (ruido innecesario en una fase temprana):
+      - Javadoc obligatorio.
+      - Magic numbers.
+      - Cyclomatic complexity.
+      - Method/class length.
+
+    Cuando el proyecto madure se puede ir endureciendo.
+-->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
+
+    <!-- Excluir generated y build -->
+    <module name="BeforeExecutionExclusionFileFilter">
+        <property name="fileNamePattern" value="module\-info\.java$"/>
+    </module>
+
+    <!-- Sin tabs -->
+    <module name="FileTabCharacter">
+        <property name="eachLine" value="true"/>
+    </module>
+
+    <!-- Línea ≤ 140 caracteres -->
+    <module name="LineLength">
+        <property name="max" value="140"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+    </module>
+
+    <!-- Newline al final de los archivos -->
+    <module name="NewlineAtEndOfFile">
+        <property name="lineSeparator" value="lf_cr_crlf"/>
+    </module>
+
+    <module name="TreeWalker">
+
+        <!-- ======================== -->
+        <!-- Naming conventions       -->
+        <!-- ======================== -->
+        <module name="TypeName">
+            <property name="format" value="^[A-Z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="ConstantName">
+            <property name="format" value="^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"/>
+        </module>
+        <module name="LocalVariableName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="MemberName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="MethodName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="ParameterName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+
+        <!-- ======================== -->
+        <!-- Imports                  -->
+        <!-- ======================== -->
+        <module name="AvoidStarImport"/>
+        <module name="UnusedImports">
+            <property name="processJavadoc" value="false"/>
+        </module>
+        <module name="RedundantImport"/>
+
+        <!-- ======================== -->
+        <!-- Bloques y braces         -->
+        <!-- ======================== -->
+        <!-- LITERAL_CATCH se omite: Java exige llaves en catch por sintaxis, no es configurable -->
+        <module name="NeedBraces">
+            <property name="tokens"
+                      value="LITERAL_DO,LITERAL_ELSE,LITERAL_FOR,LITERAL_IF,LITERAL_WHILE"/>
+        </module>
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+            <property name="tokens"
+                      value="LITERAL_TRY,LITERAL_FINALLY,LITERAL_IF,LITERAL_ELSE"/>
+        </module>
+        <!-- EmptyBlock no acepta LITERAL_CATCH; se usa el módulo dedicado -->
+        <module name="EmptyCatchBlock"/>
+
+        <!-- ======================== -->
+        <!-- Misc seguridad / calidad -->
+        <!-- ======================== -->
+        <module name="MissingOverride"/>
+        <module name="EqualsHashCode"/>
+        <module name="StringLiteralEquality"/>
+        <module name="OneStatementPerLine"/>
+        <module name="MultipleVariableDeclarations"/>
+        <module name="ArrayTypeStyle"/>
+        <module name="UpperEll"/>
+
+        <!-- Detecta System.out / System.err en productivo -->
+        <module name="RegexpSinglelineJava">
+            <property name="format" value="System\.out\.print"/>
+            <property name="message" value="No usar System.out — usa SLF4J (lombok @Slf4j)."/>
+        </module>
+        <module name="RegexpSinglelineJava">
+            <property name="format" value="System\.err\.print"/>
+            <property name="message" value="No usar System.err — usa SLF4J con nivel ERROR."/>
+        </module>
+
+    </module>
+</module>

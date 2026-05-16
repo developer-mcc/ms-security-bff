@@ -1,0 +1,143 @@
+# ============================================================
+# Build & compilation output
+# ============================================================
+build/
+out/
+target/
+*.class
+
+# Jars propios compilados (no el wrapper de Gradle)
+*.jar
+*.war
+*.ear
+!gradle/wrapper/gradle-wrapper.jar
+
+# Mantener fuentes dentro de src aunque el compilador deje un /build o /out ahí
+!**/src/main/**/build/
+!**/src/main/**/out/
+!**/src/test/**/build/
+!**/src/test/**/out/
+
+# ============================================================
+# Gradle
+# ============================================================
+.gradle/
+gradle-app.setting
+# El wrapper (jar + properties) SÍ se versiona para que el equipo use la misma versión
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ============================================================
+# Secretos y configuración local
+#
+# application.yaml (valores por defecto) → SÍ se versiona.
+# Los perfiles -local y -secret → NUNCA se versionan:
+#   contienen contraseñas reales, claves JWT, API keys, etc.
+# ============================================================
+.env
+.env.*
+!.env.example
+
+application-local.yaml
+application-local.yml
+application-local.properties
+application-secret.yaml
+application-secret.yml
+application-secret.properties
+**/src/main/resources/application-local.*
+**/src/main/resources/application-secret.*
+
+# ============================================================
+# Logs
+# ============================================================
+*.log
+logs/
+log/
+
+# ============================================================
+# JVM — volcados de crash y profiling
+# ============================================================
+hs_err_pid*
+replay_pid*
+*.hprof
+
+# ============================================================
+# Cobertura y reportes de calidad
+# (build/ ya los cubre, pero se explicita por si se generan fuera)
+# ============================================================
+jacoco.exec
+.jacoco/
+test-results/
+
+# ============================================================
+# IntelliJ IDEA
+# ============================================================
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# ============================================================
+# VS Code
+# ============================================================
+.vscode/
+
+# ============================================================
+# Eclipse / Spring Tool Suite
+# ============================================================
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+# ============================================================
+# NetBeans
+# ============================================================
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# ============================================================
+# OS — Windows
+# ============================================================
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ============================================================
+# OS — macOS (para colaboradores o CI en Mac)
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ============================================================
+# Archivos temporales y swap de editores
+# ============================================================
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.orig
+*.bak
+
+# ============================================================
+# Generado por Spring Initializr — sin valor de proyecto
+# ============================================================
+HELP.md

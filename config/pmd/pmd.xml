@@ -1,0 +1,206 @@
+<?xml version="1.0"?>
+<ruleset name="ms-security-bff"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
+                             https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>PMD ruleset for ms-security-bff: bug detection, dead code, security, multithreading.</description>
+
+  <!--
+    Ruleset PMD para ms-security-bff.
+    Foco: bugs reales, código muerto, seguridad y multithreading.
+    Estilo y formato ya están cubiertos por Spotless + Checkstyle.
+
+    Reglas deliberadamente excluidas (ruido en esta fase):
+      - Javadoc (documentation.xml completo).
+      - Complejidad de diseño avanzada (LawOfDemeter, CouplingBetweenObjects).
+      - Reglas JUnit (sin tests propios todavía).
+      - codestyle.xml (Spotless + Checkstyle lo cubren).
+
+    Supresión puntual: @SuppressWarnings("PMD.NombreDeLaRegla") en la línea afectada.
+    Supresión de bloque: @SuppressWarnings({"PMD.Regla1", "PMD.Regla2"}) en la clase.
+  -->
+
+  <!-- ================================================================
+       BEST PRACTICES — malas prácticas que producen bugs o código frágil
+       ================================================================ -->
+
+  <!-- IPs hardcodeadas detectadas como string literal -->
+  <rule ref="category/java/bestpractices.xml/AvoidUsingHardCodedIP"/>
+
+  <!-- e.printStackTrace() en lugar de log.error(..., e) -->
+  <rule ref="category/java/bestpractices.xml/AvoidPrintStackTrace"/>
+
+  <!-- System.out.println — ya cubierto por Checkstyle regex, doble cobertura intencional -->
+  <rule ref="category/java/bestpractices.xml/SystemPrintln"/>
+
+  <!-- Arrays almacenados por referencia directa (mutabilidad inesperada) -->
+  <rule ref="category/java/bestpractices.xml/ArrayIsStoredDirectly"/>
+
+  <!-- Método retorna referencia al array interno — misma razón -->
+  <rule ref="category/java/bestpractices.xml/MethodReturnsInternalArray"/>
+
+  <!-- list.size() == 0 → list.isEmpty() -->
+  <rule ref="category/java/bestpractices.xml/UseCollectionIsEmpty"/>
+
+  <!-- default no es el último case en switch -->
+  <rule ref="category/java/bestpractices.xml/DefaultLabelNotLastInSwitchStmt"/>
+
+  <!-- Variables locales declaradas y no usadas (bugs reales, no afectado por Lombok) -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+
+  <!--
+    Campos privados no leídos. PMD 7 entiende @Getter/@Setter/@Data de Lombok.
+    Si hay falso positivo en un JpaEntity con campos @Transient, usar:
+    @SuppressWarnings("PMD.UnusedPrivateField") sobre el campo.
+  -->
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+
+  <!--
+    Métodos privados nunca invocados — código muerto real.
+    Se suprimen métodos anotados con callbacks JPA (@PrePersist, @PostPersist, etc.)
+    porque Hibernate los invoca vía reflexión: PMD no ve esa invocación y los
+    marcaría como no usados incorrectamente.
+  -->
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod">
+    <properties>
+      <property name="violationSuppressXPath"
+                value="ModifierList/Annotation[@SimpleName='PrePersist'
+                                            or @SimpleName='PostPersist'
+                                            or @SimpleName='PreUpdate'
+                                            or @SimpleName='PostUpdate'
+                                            or @SimpleName='PreRemove'
+                                            or @SimpleName='PostRemove'
+                                            or @SimpleName='PostLoad']"/>
+    </properties>
+  </rule>
+
+  <!-- ================================================================
+       ERROR PRONE — bugs reales de lógica o API
+       ================================================================ -->
+
+  <!-- new BigDecimal(0.1) tiene error de representación; usar BigDecimal.valueOf(0.1) -->
+  <rule ref="category/java/errorprone.xml/AvoidDecimalLiteralsInBigDecimalConstructor"/>
+
+  <!-- obj.equals(null) siempre false; usar obj == null -->
+  <rule ref="category/java/errorprone.xml/EqualsNull"/>
+
+  <!-- x = x; asignación idempotente — probablemente error de copiar/pegar -->
+  <rule ref="category/java/errorprone.xml/IdempotentOperations"/>
+
+  <!-- null check después de un dereference → NPE garantizado -->
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+
+  <!-- Método retorna null en vez de colección vacía — rompe contratos -->
+  <rule ref="category/java/errorprone.xml/ReturnEmptyCollectionRatherThanNull"/>
+
+  <!-- str1 == str2 para Strings (debería ser .equals()) -->
+  <rule ref="category/java/errorprone.xml/UseEqualsToCompareStrings"/>
+
+  <!-- Implementa equals() sin hashCode() o viceversa -->
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+
+  <!--
+    Recursos AutoCloseable no cerrados (posibles leaks).
+    allowedResourceTypes excluye tipos que se cierran solos o son in-memory.
+    Los recursos Spring-managed (DataSource, EntityManager) no aplican aquí
+    porque se usan vía inyección y Spring los gestiona.
+  -->
+  <rule ref="category/java/errorprone.xml/CloseResource">
+    <properties>
+      <!--
+        Tipos excluidos del check porque su ciclo de vida es gestionado externamente:
+          - ByteArray*/String*/CharArray* streams: se cierran solos (in-memory, sin I/O real).
+          - jakarta.persistence.EntityManager: Spring lo abre/cierra vía EntityManagerHolder.
+          - org.hibernate.Session: obtenida con entityManager.unwrap() en TenantFilterAspect;
+            cerrarla manualmente destruiría la transacción gestionada por Spring.
+      -->
+      <property name="allowedResourceTypes"
+                value="java.io.ByteArrayOutputStream,
+                       java.io.ByteArrayInputStream,
+                       java.io.StringReader,
+                       java.io.StringWriter,
+                       java.io.CharArrayWriter,
+                       jakarta.persistence.EntityManager,
+                       org.hibernate.Session"/>
+    </properties>
+  </rule>
+
+  <!-- break/continue/return como última instrucción de un loop — oculta la intención -->
+  <rule ref="category/java/errorprone.xml/AvoidBranchingStatementAsLastInLoop"/>
+
+  <!-- ================================================================
+       PERFORMANCE — antipatrones que degradan rendimiento
+       ================================================================ -->
+
+  <!-- new String("literal") innecesario -->
+  <rule ref="category/java/performance.xml/StringInstantiation"/>
+
+  <!-- new BigInteger("0") → BigInteger.ZERO -->
+  <rule ref="category/java/performance.xml/BigIntegerInstantiation"/>
+
+  <!-- Vector es sincronizado y obsoleto; usar ArrayList -->
+  <rule ref="category/java/performance.xml/UseArrayListInsteadOfVector"/>
+
+  <!-- ================================================================
+       DESIGN — complejidad, con umbrales permisivos para fase temprana
+       ================================================================ -->
+
+  <!-- return cond == true → return cond -->
+  <rule ref="category/java/design.xml/SimplifyBooleanReturns"/>
+
+  <!-- !(a && b) → !a || !b (ley de De Morgan aplicada) -->
+  <rule ref="category/java/design.xml/SimplifyBooleanExpressions"/>
+
+  <!--
+    Complejidad ciclomática.
+    methodReportLevel=15: permite lógica moderada (PermissionEvaluator, filtros)
+    sin ruido. Se puede bajar a 10 cuando el proyecto tenga tests.
+  -->
+  <rule ref="category/java/design.xml/CyclomaticComplexity">
+    <properties>
+      <property name="methodReportLevel" value="15"/>
+      <property name="classReportLevel"  value="80"/>
+    </properties>
+  </rule>
+
+  <!--
+    Métodos con más de 8 parámetros.
+    @Builder y @RequiredArgsConstructor de Lombok reducen esto naturalmente;
+    el constructor generado puede superar el límite — suprimir si es necesario.
+  -->
+  <rule ref="category/java/design.xml/ExcessiveParameterList">
+    <properties>
+      <property name="minimum" value="8"/>
+    </properties>
+  </rule>
+
+  <!-- ================================================================
+       SECURITY — crítico para este BFF de autenticación
+       ================================================================ -->
+
+  <!-- Incluye todas las reglas de seguridad disponibles en PMD:
+       HardCodedCryptographicKey, InsecureCryptoIv, etc. -->
+  <rule ref="category/java/security.xml"/>
+
+  <!-- ================================================================
+       MULTITHREADING — TenantContext (ThreadLocal) + @Async listeners
+       ================================================================ -->
+
+  <!-- Double-checked locking sin volatile — bug clásico de concurrencia -->
+  <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+
+  <!-- Singleton no thread-safe con estado mutable -->
+  <rule ref="category/java/multithreading.xml/NonThreadSafeSingleton"/>
+
+  <!-- SimpleDateFormat / DateFormat static sin sincronización -->
+  <rule ref="category/java/multithreading.xml/UnsynchronizedStaticFormatter"/>
+
+  <!-- ThreadGroup — API obsoleta y problemática -->
+  <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+
+  <!-- notify() en vez de notifyAll() — puede dejar threads esperando -->
+  <rule ref="category/java/multithreading.xml/UseNotifyAllInsteadOfNotify"/>
+
+</ruleset>
