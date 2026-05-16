@@ -30,6 +30,17 @@ spring:
       mode: always
       platform: postgres
       continue-on-error: false
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
 
 management:
   endpoints:
@@ -80,3 +91,47 @@ security:
         capacity: 3
         refill-period: PT5M       # 3 req / 5 min por usuario
         keyed-by: USER_ID
+
+notification:
+  email:
+    from: ${NOTIFICATION_EMAIL_FROM:noreply@ms-security-bff.local}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      email-notification:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        registerHealthIndicator: false
+      sms-notification:
+        slidingWindowSize: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: false
+      whatsapp-notification:
+        slidingWindowSize: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: false
+  retry:
+    instances:
+      email-notification:
+        maxAttempts: 3
+        waitDuration: 1s
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+  bulkhead:
+    instances:
+      email-notification:
+        maxConcurrentCalls: 20
+        maxWaitDuration: 500ms
+      sms-notification:
+        maxConcurrentCalls: 10
+        maxWaitDuration: 200ms
+      whatsapp-notification:
+        maxConcurrentCalls: 10
+        maxWaitDuration: 200ms

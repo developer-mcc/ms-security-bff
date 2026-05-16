@@ -12,7 +12,8 @@
     { "key": "sesionId",         "value": "",                     "type": "string" },
     { "key": "perfilUsuarioId",  "value": "",                     "type": "string" },
     { "key": "sucursalActiva",   "value": "",                     "type": "string" },
-    { "key": "currentUser",      "value": "",                     "type": "string" }
+    { "key": "currentUser",      "value": "",                     "type": "string" },
+    { "key": "otpCodigo",        "value": "",                     "type": "string" }
   ],
   "item": [
     {
@@ -840,6 +841,346 @@
             "header": [],
             "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth","logout"] },
             "description": "Ejecutar **después** de `Logout`. Confirma que el `JwtAuthenticationFilter` rechaza un `jti` revocado aunque la firma JWT siga siendo válida."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. OTP",
+      "description": "Flujo de OTP en dos pasos: solicitar un código → verificarlo.\n\n**Prerequisito**: hacer login primero (carpeta 1) para tener `{{accessToken}}`.\n\n**Canales disponibles**: `EMAIL` · `SMS` · `WHATSAPP`\n\n**Propósitos**: `LOGIN_2FA` · `RESET_PASSWORD`\n\n**Política de intentos**: 3 intentos máximos por OTP (configurable en `CodigoOtp.INTENTOS_MAXIMOS`). Al 3er fallo → 422 `otp-max-intentos`.\n\n**Rate limit** `/auth/otp/verify`: 3 req / 5 min / usuario (política `otp-verify` en `application.yaml`).\n\n**Nota**: la estrategia de notificación (email/SMS/WhatsApp) aún no está implementada. El código generado se puede obtener consultando directamente `sec.codigos_otp` en la BD, o leyendo el campo `codigoPlano` del log de `OtpAuditListener`.",
+      "item": [
+        {
+          "name": "Solicitar OTP — LOGIN_2FA por EMAIL (202)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('Body vacío (sin datos sensibles)', () => {",
+                  "  pm.expect(pm.response.text()).to.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"EMAIL\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth","otp","request"] },
+            "description": "Genera un código de 6 dígitos (`SecureRandom`), lo hashea con BCrypt y lo persiste en `sec.codigos_otp` con TTL de 5 min. Invalida automáticamente cualquier OTP pendiente anterior del mismo usuario + propósito. Responde 202 sin body — el código viaja por el canal (email/SMS/WhatsApp) al usuario, nunca en la respuesta HTTP."
+          }
+        },
+        {
+          "name": "Solicitar OTP — RESET_PASSWORD por SMS (202)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('Body vacío', () => pm.expect(pm.response.text()).to.be.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"SMS\",\n  \"proposito\": \"RESET_PASSWORD\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth","otp","request"] }
+          }
+        },
+        {
+          "name": "Verificar OTP — código correcto (204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "pm.test('Body vacío', () => pm.expect(pm.response.text()).to.be.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"{{otpCodigo}}\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "Reemplaza `{{otpCodigo}}` con el código obtenido de `sec.codigos_otp`. Usa bloqueo pesimista (`PESSIMISTIC_WRITE`) para prevenir condiciones de carrera en verificaciones concurrentes. Al verificar correctamente marca el OTP como `usado_en = NOW()` y publica `OtpVerificadoEvent` para auditoría."
+          }
+        },
+        {
+          "name": "Verificar OTP — código incorrecto (422 otp-invalido)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail otp-invalido', () => {",
+                  "  pm.expect(body.type).to.include('otp-invalido');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"000000\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "Código 000000 nunca coincide. Cada intento fallido incrementa `intentos` en `sec.codigos_otp` (BCrypt match falla → `OtpInvalidoException` → 422). El incremento se persiste aunque la transacción del use case haga rollback (`noRollbackFor`)."
+          }
+        },
+        {
+          "name": "Verificar OTP — máximo intentos agotados (422 otp-max-intentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail otp-max-intentos', () => {",
+                  "  pm.expect(body.type).to.include('otp-max-intentos');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "});",
+                  "pm.test('Título legible sin mojibake', () => {",
+                  "  pm.expect(body.title).to.eql('M\\u00e1ximo de intentos OTP alcanzado');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"000000\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "Ejecutar **después** de 3 intentos fallidos con `000000`. Al 3er fallo `intentos >= INTENTOS_MAXIMOS` (3) → `OtpMaxIntentosException` → 422. El OTP queda inutilizable aunque no haya expirado; hay que solicitar uno nuevo."
+          }
+        },
+        {
+          "name": "Verificar OTP — código expirado (422 otp-expirado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail otp-expirado', () => {",
+                  "  pm.expect(body.type).to.include('otp-expirado');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "});",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"{{otpCodigo}}\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "Solicitar OTP, esperar 5 minutos (TTL del código), luego intentar verificar. La consulta `findParaVerificar` filtra `expira_en > NOW()` por lo que no encontrará el OTP → `OtpExpiradoException` → 422."
+          }
+        },
+        {
+          "name": "Solicitar OTP — sin token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('ProblemDetail authentication-required', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.include('authentication-required');",
+                  "});",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"EMAIL\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth","otp","request"] },
+            "description": "`@PreAuthorize(\"isAuthenticated()\")` — sin token → `JwtAuthenticationEntryPoint` → 401."
+          }
+        },
+        {
+          "name": "Verificar OTP — sin token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"123456\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] }
+          }
+        },
+        {
+          "name": "Solicitar OTP — body inválido (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('ProblemDetail validation-error con errors', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.include('validation-error');",
+                  "  pm.expect(body.errors).to.be.an('object');",
+                  "  console.log('Errores de validación:', body.errors);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": null,\n  \"proposito\": null\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth","otp","request"] },
+            "description": "`@NotNull` en `SolicitarOtpRequest.canal` y `proposito` → `MethodArgumentNotValidException` → 400 con mapa `errors`."
+          }
+        },
+        {
+          "name": "Verificar OTP — código no es 6 dígitos (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('ProblemDetail validation-error — campo codigo', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.type).to.include('validation-error');",
+                  "  pm.expect(body.errors).to.have.property('codigo');",
+                  "  console.log('Error en codigo:', body.errors.codigo);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"12345\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "`@Pattern(regexp = \"\\\\d{6}\")` en `VerificarOtpRequest.codigo` — 5 dígitos no pasa → 400 con `errors.codigo`."
+          }
+        },
+        {
+          "name": "Verificar OTP — rate limit (3+1 → 429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('429 Too Many Requests', () => pm.response.to.have.status(429));",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail rate-limit-exceeded', () => {",
+                  "  pm.expect(body.type).to.include('rate-limit-exceeded');",
+                  "  pm.expect(body.status).to.eql(429);",
+                  "});",
+                  "pm.test('X-RateLimit-Limit == 3 (política otp-verify)', () => {",
+                  "  pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.eql('3');",
+                  "});",
+                  "pm.test('Retry-After presente', () => {",
+                  "  pm.expect(pm.response.headers.get('Retry-After')).to.match(/^[1-9]\\d*$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"000000\",\n  \"proposito\": \"LOGIN_2FA\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth","otp","verify"] },
+            "description": "Ejecutar **4 veces seguidas** con el usuario autenticado. Los primeros 3 reciben 422; el 4to activa el `RateLimitFilter` (política `otp-verify`: 3 req / 5 min / USER_ID) → 429. A diferencia de `/auth/login` (keyed by IP), este rate-limit es **por usuario autenticado**."
           }
         }
       ]
