@@ -31,6 +31,25 @@ spring:
       platform: postgres
       continue-on-error: false
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info   # solo estos dos expuestos vía HTTP
+  endpoint:
+    health:
+      show-details: when-authorized  # detalles solo para usuarios autenticados
+      show-components: when-authorized
+  info:
+    env:
+      enabled: true            # permite poblar /actuator/info desde application.yaml
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: BFF de seguridad — autenticación, JWT, permisos 3D y multi-tenant
+    java-version: '@java.version@'
+
 security:
   jwt:
     # En producción cargar desde variable de entorno o Vault. >= 32 bytes (256 bits) para HS256.
