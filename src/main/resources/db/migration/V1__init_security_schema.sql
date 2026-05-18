@@ -213,6 +213,21 @@ CREATE INDEX idx_codigos_otp_usuario_proposito_activos
 CREATE INDEX idx_codigos_otp_expira ON sec.codigos_otp (expira_en);
 
 -- ---------------------------------------------------------------------
+-- reset_sessions: sesiones temporales para el flujo forgot-password
+-- (no autenticado). Estados: PENDIENTE → VERIFICADO → USADO.
+-- ---------------------------------------------------------------------
+CREATE TABLE sec.reset_sessions (
+    id         UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    usuario_id UUID        NOT NULL REFERENCES sec.usuarios(id) ON DELETE CASCADE,
+    estado     VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+               CHECK (estado IN ('PENDIENTE','VERIFICADO','USADO')),
+    ip_origen  VARCHAR(45),
+    creado_en  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expira_en  TIMESTAMP   NOT NULL
+);
+CREATE INDEX idx_reset_sessions_usuario ON sec.reset_sessions (usuario_id);
+
+-- ---------------------------------------------------------------------
 -- bitacora_auditoria: tabla append-only para cambios de entidad y eventos
 -- de seguridad (login, otp, branch switch, token revoked).
 -- valor_anterior / valor_nuevo como JSONB para diferencias fáciles.

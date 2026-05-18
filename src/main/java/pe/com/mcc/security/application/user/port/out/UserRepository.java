@@ -1,5 +1,6 @@
 package pe.com.mcc.security.application.user.port.out;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -9,6 +10,10 @@ import pe.com.mcc.security.domain.user.model.Usuario;
 public interface UserRepository {
 
   Optional<Usuario> findByNombreUsuario(String nombreUsuario);
+
+  Optional<Usuario> findByCorreo(String correo);
+
+  Optional<Usuario> findByTelefono(String telefono);
 
   Optional<Usuario> findById(UUID usuarioId);
 
@@ -23,4 +28,10 @@ public interface UserRepository {
 
   /** Sucursales habilitadas para el usuario, marcando cuál es la predeterminada. */
   List<SucursalUsuario> findSucursalesByUsuarioId(UUID usuarioId);
+
+  /**
+   * Actualiza únicamente el hash de contraseña y la fecha de cambio. Usado por el flujo
+   * reset-password (post-OTP) y change-password.
+   */
+  void actualizarContrasenaHash(UUID usuarioId, String hash, LocalDateTime ahora);
 }

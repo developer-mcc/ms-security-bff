@@ -15,9 +15,12 @@ import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import pe.com.mcc.security.domain.auth.exception.ContactoNoRegistradoException;
 import pe.com.mcc.security.domain.auth.exception.InvalidCredentialsException;
+import pe.com.mcc.security.domain.auth.exception.ResetSesionInvalidaException;
 import pe.com.mcc.security.domain.auth.exception.SucursalNoAutorizadaException;
 import pe.com.mcc.security.domain.auth.exception.UserBlockedException;
+import pe.com.mcc.security.domain.otp.exception.CanalNoDisponibleException;
 import pe.com.mcc.security.domain.otp.exception.OtpExpiradoException;
 import pe.com.mcc.security.domain.otp.exception.OtpInvalidoException;
 import pe.com.mcc.security.domain.otp.exception.OtpMaxIntentosException;
@@ -67,6 +70,34 @@ public class GlobalExceptionHandler {
   // ============================================================
   // OTP (400 / 422)
   // ============================================================
+
+  // ============================================================
+  // Not Found (404)
+  // ============================================================
+
+  @ExceptionHandler(ContactoNoRegistradoException.class)
+  public ProblemDetail handleContactoNoRegistrado(ContactoNoRegistradoException e) {
+    return problem(
+        HttpStatus.NOT_FOUND, "contacto-no-registrado", "Contacto no registrado", e.getMessage());
+  }
+
+  @ExceptionHandler(ResetSesionInvalidaException.class)
+  public ProblemDetail handleResetSesionInvalida(ResetSesionInvalidaException e) {
+    return problem(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "reset-sesion-invalida",
+        "Sesión de reset inválida",
+        e.getMessage());
+  }
+
+  @ExceptionHandler(CanalNoDisponibleException.class)
+  public ProblemDetail handleCanalNoDisponible(CanalNoDisponibleException e) {
+    return problem(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "canal-no-disponible",
+        "Canal de notificación no disponible",
+        e.getMessage());
+  }
 
   @ExceptionHandler(OtpInvalidoException.class)
   public ProblemDetail handleOtpInvalido(OtpInvalidoException e) {

@@ -6,23 +6,39 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NullMarked;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import pe.com.mcc.security.application.auth.port.in.AuthenticateUseCase;
+import pe.com.mcc.security.application.auth.port.in.CambiarContrasenaCommand;
+import pe.com.mcc.security.application.auth.port.in.CambiarContrasenaUseCase;
 import pe.com.mcc.security.application.auth.port.in.LogoutUseCase;
 import pe.com.mcc.security.application.auth.port.in.RefreshTokenUseCase;
+import pe.com.mcc.security.application.auth.port.in.ResetPasswordCommand;
+import pe.com.mcc.security.application.auth.port.in.ResetPasswordUseCase;
+import pe.com.mcc.security.application.auth.port.in.SolicitarResetCommand;
+import pe.com.mcc.security.application.auth.port.in.SolicitarResetUseCase;
 import pe.com.mcc.security.application.auth.port.in.SwitchBranchUseCase;
+import pe.com.mcc.security.application.auth.port.in.VerificarResetOtpCommand;
+import pe.com.mcc.security.application.auth.port.in.VerificarResetOtpUseCase;
 import pe.com.mcc.security.application.user.port.in.ObtenerPerfilUseCase;
 import pe.com.mcc.security.domain.user.model.PerfilUsuario;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.CambiarContrasenaRequest;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.LoginRequest;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.PerfilResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.RefreshRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.ResetPasswordAnonimRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.SolicitarResetRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.SolicitarResetResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.TokenResponse;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.VerificarResetOtpRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.VerificarResetOtpResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.mapper.AuthDtoMapper;
 import pe.com.mcc.security.infrastructure.adapter.in.web.shared.HttpRequestContextResolver;
 import pe.com.mcc.security.infrastructure.adapter.out.security.jwt.UserPrincipal;
@@ -42,6 +58,10 @@ public class AuthController {
   private final LogoutUseCase logout;
   private final SwitchBranchUseCase switchBranch;
   private final ObtenerPerfilUseCase obtenerPerfil;
+  private final CambiarContrasenaUseCase cambiarContrasena;
+  private final SolicitarResetUseCase solicitarReset;
+  private final VerificarResetOtpUseCase verificarResetOtp;
+  private final ResetPasswordUseCase resetPassword;
   private final AuthDtoMapper mapper;
   private final HttpRequestContextResolver requestContext;
 
@@ -90,5 +110,62 @@ public class AuthController {
     PerfilUsuario perfil =
         obtenerPerfil.obtenerPerfil(principal.usuarioId(), principal.sucursalActiva());
     return ResponseEntity.ok(mapper.toPerfilResponse(perfil));
+  }
+
+  /**
+   * Cambia la contraseña del usuario autenticado. Requiere haber completado el flujo OTP con
+   * proposito=RESET_PASSWORD antes de llamar este endpoint. Revoca todos los tokens activos al
+   * finalizar — el cliente debe limpiar su sesión local y redirigir al login.
+   */
+  @PatchMapping("/password")
+  @PreAuthorize("isAuthenticated()")
+  public ResponseEntity<Void> cambiarContrasena(
+      @Valid @RequestBody CambiarContrasenaRequest body,
+      @AuthenticationPrincipal UserPrincipal principal) {
+    cambiarContrasena.cambiarContrasena(
+        new CambiarContrasenaCommand(principal.usuarioId(), body.nuevaContrasena()));
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Paso 1 — inicia el flujo de recuperación de contraseña sin autenticación. Genera un OTP y lo
+   * envía al canal elegido. Retorna 202 siempre para evitar enumeración de cuentas.
+   */
+  @PostMapping("/password/forgot")
+  public ResponseEntity<SolicitarResetResponse> forgotPassword(
+      @Valid @RequestBody SolicitarResetRequest body, HttpServletRequest request) {
+    var result =
+        solicitarReset.solicitar(
+            new SolicitarResetCommand(
+                body.contacto(),
+                body.canal(),
+                requestContext.resolveDispositivo(request).direccionIp()));
+    return ResponseEntity.accepted().body(mapper.toSolicitarResetResponse(result));
+  }
+
+  /**
+   * Paso 2 — verifica el OTP del flujo forgot-password. Retorna un resetToken de un solo uso que
+   * autoriza el PATCH /auth/password/reset.
+   */
+  @PostMapping("/password/forgot/verify")
+  public ResponseEntity<VerificarResetOtpResponse> forgotPasswordVerify(
+      @Valid @RequestBody VerificarResetOtpRequest body, HttpServletRequest request) {
+    var result =
+        verificarResetOtp.verificar(
+            new VerificarResetOtpCommand(
+                body.preResetToken(),
+                body.codigo(),
+                requestContext.resolveDispositivo(request).direccionIp()));
+    return ResponseEntity.ok(new VerificarResetOtpResponse(result.resetToken()));
+  }
+
+  /**
+   * Paso 3 — establece la nueva contraseña usando el resetToken obtenido en el paso 2. Revoca todos
+   * los tokens activos del usuario — el cliente debe redirigir al login.
+   */
+  @PatchMapping("/password/reset")
+  public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordAnonimRequest body) {
+    resetPassword.reset(new ResetPasswordCommand(body.resetToken(), body.nuevaContrasena()));
+    return ResponseEntity.noContent().build();
   }
 }

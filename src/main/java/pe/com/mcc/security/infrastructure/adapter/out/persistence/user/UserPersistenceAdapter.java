@@ -1,6 +1,7 @@
 package pe.com.mcc.security.infrastructure.adapter.out.persistence.user;
 
 import jakarta.persistence.EntityManager;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,6 +23,16 @@ public class UserPersistenceAdapter implements UserRepository {
   @Override
   public Optional<Usuario> findByNombreUsuario(String nombreUsuario) {
     return usuarioJpaRepository.findByNombreUsuario(nombreUsuario).map(usuarioMapper::toDomain);
+  }
+
+  @Override
+  public Optional<Usuario> findByCorreo(String correo) {
+    return usuarioJpaRepository.findByCorreo(correo).map(usuarioMapper::toDomain);
+  }
+
+  @Override
+  public Optional<Usuario> findByTelefono(String telefono) {
+    return usuarioJpaRepository.findByTelefono(telefono).map(usuarioMapper::toDomain);
   }
 
   @Override
@@ -88,6 +99,11 @@ public class UserPersistenceAdapter implements UserRepository {
                 () -> new IllegalStateException("Usuario no existe en BD: " + usuario.id()));
     usuarioMapper.copyMutableFieldsToEntity(usuario, entity);
     usuarioJpaRepository.save(entity);
+  }
+
+  @Override
+  public void actualizarContrasenaHash(UUID usuarioId, String hash, LocalDateTime ahora) {
+    usuarioJpaRepository.actualizarContrasenaHash(usuarioId, hash, ahora);
   }
 
   @Override

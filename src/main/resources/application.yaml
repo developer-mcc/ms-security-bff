@@ -91,6 +91,11 @@ security:
         capacity: 3
         refill-period: PT5M       # 3 req / 5 min por usuario
         keyed-by: USER_ID
+      forgot-password:
+        path-pattern: /auth/password/forgot
+        capacity: 3
+        refill-period: PT10M      # 3 req / 10 min por IP (anti-enumeración)
+        keyed-by: IP
 
 notification:
   email:

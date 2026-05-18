@@ -1,0 +1,1310 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║      ms-security-bff  ×  Angular 21 — GUÍA DE INTEGRACIÓN COMPLETA            ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+API analizado  : Spring Boot 4.0.6 / ms-security-bff
+Fecha          : 2026-05-16
+Angular target : Angular 21 (standalone components, Signals, functional guards)
+Base URL dev   : http://localhost:8080
+Autenticación  : JWT Bearer — header "Authorization: Bearer <accessToken>"
+Token type     : "Bearer" (devuelto en tokenType del response)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN I — TABLA COMPLETA DE ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Nro  Método  Path                           Auth   Permiso requerido         Descripción
+─────────────────────────────────────────────────────────────────────────────────────────
+01   POST    /auth/login                    No     —                         Login con usuario + contraseña. Devuelve accessToken + refreshToken
+02   POST    /auth/refresh                  No     —                         Renueva el accessToken con el refreshToken. Rota el refreshToken
+03   POST    /auth/logout                   Sí     —                         Revoca la sesión actual (sesion_id del accessToken)
+04   POST    /auth/logout-all               Sí     —                         Revoca TODAS las sesiones del usuario (todos los dispositivos)
+05   POST    /auth/switch-branch/{id}       Sí     —                         Cambia de sucursal activa. Revoca sesión actual, emite nuevo par de tokens
+06   GET     /auth/me                       Sí     —                         Perfil completo del usuario autenticado (datos + rol + sucursales)
+07   POST    /auth/otp/request              Sí     isAuthenticated()         Solicita un código OTP. Body: { canal, proposito }
+08   POST    /auth/otp/verify               Sí     isAuthenticated()         Verifica un OTP. Body: { codigo(6 dígitos), proposito }
+09   GET     /usuarios                      Sí     hasPermission(USER,READ)  Lista usuarios de la empresa activa. ?empresaId= opcional
+10   POST    /usuarios                      Sí     hasPermission(USER,CREATE) Crea un nuevo usuario con roles y sucursales
+11   GET     /actuator/health               No     —                         Estado del servicio (UP/DOWN)
+12   GET     /actuator/info                 No     —                         Metadata: nombre app, versión Java
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN II — CONTRATOS DE REQUEST / RESPONSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+── 01. POST /auth/login ─────────────────────────────────────────────────────────
+Request body:
+  { "nombreUsuario": "cajero.bsj", "contrasena": "Demo2026!" }
+
+Response 200:
+  {
+    "sesionId": "uuid",
+    "accessToken": "eyJ...",
+    "accessExpiraEn": "2026-05-16T10:30:00",
+    "refreshToken": "eyJ...",
+    "refreshExpiraEn": "2026-05-23T10:15:00",
+    "tokenType": "Bearer"
+  }
+
+Errores posibles:
+  401 invalid-credentials  — usuario o contraseña incorrectos
+  403 user-blocked         — cuenta bloqueada (5 intentos fallidos, esperar 15 min)
+  429 rate-limit-exceeded  — más de 5 intentos / minuto por IP (Retry-After header)
+  400 validation-error     — campos vacíos o exceden longitud
+
+── 02. POST /auth/refresh ───────────────────────────────────────────────────────
+Request body:
+  { "refreshToken": "eyJ..." }
+
+Response 200: mismo shape que TokenResponse (nuevo accessToken + nuevo refreshToken)
+
+Errores posibles:
+  401 token-expired  — refreshToken expirado (7 días); el usuario debe loguearse de nuevo
+  401 token-revoked  — refreshToken fue revocado (logout o branch-switch previo)
+  401 token-invalid  — token malformado
+  429 rate-limit-exceeded — más de 10 intentos / minuto por IP
+
+IMPORTANTE: el refreshToken se ROTA en cada llamada. Siempre guardar el NUEVO refreshToken
+devuelto, nunca reusar el anterior.
+
+── 03. POST /auth/logout ────────────────────────────────────────────────────────
+Request: sin body (el sesionId se lee del accessToken por el servidor)
+Response: 204 No Content
+Requiere: Authorization header con accessToken válido
+
+── 04. POST /auth/logout-all ────────────────────────────────────────────────────
+Request: sin body
+Response: 204 No Content
+Efecto: invalida TODOS los tokens del usuario en TODOS los dispositivos
+
+── 05. POST /auth/switch-branch/{sucursalId} ────────────────────────────────────
+Path param: sucursalId (UUID)
+Response 200: nuevo TokenResponse con sucursal activa cambiada
+Efecto: revoca sesión actual, emite par nuevo con nueva sucursal activa
+El cliente DEBE reemplazar accessToken y refreshToken almacenados.
+
+── 06. GET /auth/me ─────────────────────────────────────────────────────────────
+Response 200:
+  {
+    "usuarioId": "uuid",
+    "empresaId": "uuid | null",
+    "nombreUsuario": "cajero.bsj",
+    "correo": "cajero@boticasanjuan.com",
+    "nombres": "Carlos",
+    "apellidos": "Quispe",
+    "dni": "12345678 | null",
+    "telefono": "+51987654321 | null",
+    "canalOtpPreferido": "EMAIL | SMS | WHATSAPP",
+    "mfaHabilitado": true,
+    "rol": "CAJERO | null",
+    "sucursalActiva": "uuid | null",
+    "sucursalActivaNombre": "Botica San Juan — Centro | null",
+    "sucursalesDisponibles": [
+      { "id": "uuid", "nombre": "Botica San Juan — Centro", "esPredeterminada": true },
+      { "id": "uuid", "nombre": "Botica San Juan — Sur",   "esPredeterminada": false }
+    ]
+  }
+
+── 07. POST /auth/otp/request ───────────────────────────────────────────────────
+Request body:
+  { "canal": "EMAIL | SMS | WHATSAPP", "proposito": "LOGIN_2FA | RESET_PASSWORD" }
+
+Response: 202 Accepted (sin body)
+El código OTP llega por el canal indicado (EMAIL activo; SMS/WHATSAPP pendientes de gateway)
+
+── 08. POST /auth/otp/verify ────────────────────────────────────────────────────
+Request body:
+  { "codigo": "123456", "proposito": "LOGIN_2FA | RESET_PASSWORD" }
+
+Response: 204 No Content
+Errores:
+  422 otp-invalido      — código incorrecto
+  422 otp-expirado      — TTL de 5 minutos superado
+  422 otp-max-intentos  — 3 intentos fallidos agotados
+  429 rate-limit-exceeded — 3 intentos / 5 minutos / usuario
+
+── 09. GET /usuarios ────────────────────────────────────────────────────────────
+Query param: empresaId (UUID, opcional)
+Response 200: array de UsuarioResponse
+  [{ "id": "uuid", "empresaId": "uuid", "nombreUsuario": "...", "correo": "...",
+     "nombres": "...", "apellidos": "...", "estado": "ACTIVO|INACTIVO|BLOQUEADO",
+     "mfaHabilitado": true, "roles": ["CAJERO"] }]
+
+Requiere: hasPermission(null, "USER", "READ") — rol con acción READ sobre recurso USER
+
+── 10. POST /usuarios ───────────────────────────────────────────────────────────
+Request body:
+  {
+    "empresaId": "uuid",
+    "nombreUsuario": "nuevo.user",
+    "correo": "nuevo@empresa.com",
+    "contrasena": "Passw0rd!",
+    "nombres": "Ana",
+    "apellidos": "García",
+    "dni": "87654321",
+    "telefono": "+51912345678",
+    "canalOtpPreferido": "EMAIL",
+    "mfaHabilitado": true,
+    "rolesIds": ["CAJERO"],
+    "sucursalesHabilitadas": ["uuid-sucursal"]
+  }
+
+Response 200: UsuarioResponse del usuario creado
+Requiere: hasPermission(null, "USER", "CREATE")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN III — CATÁLOGO DE ERRORES (RFC 9457 ProblemDetail)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Todos los errores tienen este shape:
+  {
+    "type": "urn:problem-type:<slug>",
+    "title": "Texto legible",
+    "status": 4xx | 5xx,
+    "detail": "Mensaje con detalle",
+    "traceId": "abc123...",   <- correlacionar con logs del servidor
+    "errors": { "campo": "mensaje" }  <- SOLO en 400 validation-error
+  }
+
+Status  Slug                   Cuándo
+─────────────────────────────────────────────────────────────────────────────
+400     validation-error       Bean validation fallida. Ver campo "errors"
+400     malformed-request      JSON inválido o body ausente
+400     illegal-argument       Argumento semánticamente inválido
+401     invalid-credentials    Usuario o contraseña incorrectos
+401     token-expired          accessToken o refreshToken expirado
+401     token-revoked          Token revocado (logout / branch-switch)
+401     token-invalid          Token malformado o firma inválida
+403     user-blocked           Cuenta bloqueada por intentos fallidos
+403     branch-not-authorized  Usuario sin acceso a la sucursal solicitada
+403     access-denied          Rol sin permiso para este endpoint
+422     otp-invalido           Código OTP incorrecto
+422     otp-expirado           OTP expiró (TTL 5 min)
+422     otp-max-intentos       3 intentos OTP agotados
+429     rate-limit-exceeded    Límite de tasa superado. Ver header Retry-After
+500     internal-server-error  Error no esperado en el servidor
+
+Headers adicionales en 429:
+  X-RateLimit-Limit: <capacidad>
+  X-RateLimit-Remaining: 0
+  Retry-After: <segundos hasta reset>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN IV — ROLES Y PERMISOS 3D (lo que el frontend recibe en el JWT / /me)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Roles disponibles:
+  SUPER_ADMIN, ADMIN_EMPRESA, ADMIN_SUCURSAL, FARMACEUTICO, CAJERO, AUDITOR
+
+Recursos (en JWT payload y en @PreAuthorize del backend):
+  PRODUCT, STOCK, SALE, CLIENT, USER, BRANCH, REPORT,
+  SUPPLIER, PURCHASE_ORDER, PRESCRIPTION, AUDIT, * (wildcard SUPER_ADMIN)
+
+Acciones: READ, CREATE, UPDATE, DELETE
+Alcance: OWN_BRANCH (solo su sucursal), ALL_BRANCHES (todas las sucursales de la empresa)
+
+El JWT payload contiene un mapa de permisos. El frontend lo usa para:
+  - Ocultar/mostrar elementos UI (directiva *appHasPermission)
+  - Proteger rutas (PermissionGuard)
+  NO confiar solo en el frontend: el backend valida nuevamente.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN V — ESTRATEGIA DE ALMACENAMIENTO DE TOKENS (Seguridad)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+accessToken (15 min TTL)
+  → SOLO en memoria (signal privado en AuthStore)
+  → Se pierde al recargar la página (se renueva automáticamente con refreshToken)
+  → NUNCA en localStorage ni sessionStorage (expuesto a XSS)
+
+refreshToken (7 días TTL)
+  → sessionStorage (sesión de pestaña) como mínimo
+  → localStorage solo si el usuario marca "Recordarme"
+  → En ambos casos, borrar en logout y logout-all
+
+Al cargar la aplicación (APP_INITIALIZER):
+  1. Leer refreshToken del storage
+  2. Si existe, llamar POST /auth/refresh
+  3. Si 200 → guardar nuevo accessToken en memoria, nuevo refreshToken en storage
+  4. Si 401 (expirado/revocado) → limpiar storage, redirigir a /login
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN VI — ESTRUCTURA DE PROYECTO ANGULAR 21
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+src/
+├── app/
+│   ├── core/                           ← servicios singleton, interceptores, guards
+│   │   ├── auth/
+│   │   │   ├── auth.store.ts           ← estado global con Signals (accessToken, perfil, etc.)
+│   │   │   ├── auth.service.ts         ← llama a la API de auth
+│   │   │   ├── token.service.ts        ← lectura/escritura de tokens en memoria/storage
+│   │   │   └── auth.initializer.ts     ← APP_INITIALIZER: intenta refresh al arrancar
+│   │   ├── interceptors/
+│   │   │   ├── auth.interceptor.ts     ← agrega Authorization: Bearer header
+│   │   │   ├── refresh.interceptor.ts  ← captura 401, renueva token, reintenta request
+│   │   │   └── error.interceptor.ts    ← mapea ProblemDetail a mensajes de UI
+│   │   ├── guards/
+│   │   │   ├── auth.guard.ts           ← redirige a /login si no hay sesión
+│   │   │   └── permission.guard.ts     ← verifica permiso específico por ruta
+│   │   ├── permissions/
+│   │   │   └── permission.service.ts   ← evalúa permisos desde el JWT/perfil
+│   │   ├── http/
+│   │   │   └── api.client.ts           ← wrapper tipado sobre HttpClient
+│   │   └── models/                     ← interfaces TypeScript del dominio
+│   │       ├── auth.models.ts
+│   │       ├── user.models.ts
+│   │       ├── permission.models.ts
+│   │       └── problem-detail.model.ts
+│   ├── features/
+│   │   ├── auth/                       ← feature de autenticación (rutas lazy)
+│   │   │   ├── login/
+│   │   │   │   ├── login.component.ts
+│   │   │   │   └── login.component.html
+│   │   │   ├── otp/
+│   │   │   │   ├── otp-verify.component.ts
+│   │   │   │   └── otp-verify.component.html
+│   │   │   └── auth.routes.ts
+│   │   ├── users/                      ← gestión de usuarios (lazy)
+│   │   │   ├── user-list.component.ts
+│   │   │   ├── user-create.component.ts
+│   │   │   ├── users.service.ts
+│   │   │   └── users.routes.ts
+│   │   └── shell/                      ← layout con navbar, branch switcher
+│   │       ├── shell.component.ts
+│   │       ├── branch-switcher.component.ts
+│   │       └── shell.routes.ts
+│   ├── shared/
+│   │   ├── directives/
+│   │   │   └── has-permission.directive.ts  ← *appHasPermission="'USER:READ'"
+│   │   ├── pipes/
+│   │   │   └── role-label.pipe.ts
+│   │   └── components/
+│   │       ├── error-message.component.ts
+│   │       └── loading-spinner.component.ts
+│   ├── app.config.ts                   ← provideHttpClient, provideRouter, interceptors
+│   ├── app.routes.ts                   ← rutas raíz con lazy loading
+│   └── app.component.ts
+└── environments/
+    ├── environment.ts                  ← dev: http://localhost:8080
+    └── environment.prod.ts             ← prod: https://api.tudominio.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN VII — INTERFACES TYPESCRIPT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// core/models/auth.models.ts
+
+export interface LoginRequest {
+  nombreUsuario: string;
+  contrasena: string;
+}
+
+export interface RefreshRequest {
+  refreshToken: string;
+}
+
+export interface TokenResponse {
+  sesionId: string;
+  accessToken: string;
+  accessExpiraEn: string;        // ISO-8601 LocalDateTime (America/Lima)
+  refreshToken: string;
+  refreshExpiraEn: string;
+  tokenType: 'Bearer';
+}
+
+export interface SucursalInfo {
+  id: string;
+  nombre: string;
+  esPredeterminada: boolean;
+}
+
+export interface PerfilResponse {
+  usuarioId: string;
+  empresaId: string | null;
+  nombreUsuario: string;
+  correo: string;
+  nombres: string;
+  apellidos: string;
+  dni: string | null;
+  telefono: string | null;
+  canalOtpPreferido: CanalOtp;
+  mfaHabilitado: boolean;
+  rol: Rol | null;
+  sucursalActiva: string | null;
+  sucursalActivaNombre: string | null;
+  sucursalesDisponibles: SucursalInfo[];
+}
+
+export type CanalOtp = 'EMAIL' | 'SMS' | 'WHATSAPP';
+export type PropositoOtp = 'LOGIN_2FA' | 'RESET_PASSWORD';
+
+export interface SolicitarOtpRequest {
+  canal: CanalOtp;
+  proposito: PropositoOtp;
+}
+
+export interface VerificarOtpRequest {
+  codigo: string;   // exactamente 6 dígitos
+  proposito: PropositoOtp;
+}
+
+// core/models/permission.models.ts
+
+export type Accion = 'READ' | 'CREATE' | 'UPDATE' | 'DELETE';
+export type Alcance = 'OWN_BRANCH' | 'ALL_BRANCHES';
+export type Rol = 'SUPER_ADMIN' | 'ADMIN_EMPRESA' | 'ADMIN_SUCURSAL'
+               | 'FARMACEUTICO' | 'CAJERO' | 'AUDITOR';
+
+export type Recurso = 'PRODUCT' | 'STOCK' | 'SALE' | 'CLIENT' | 'USER'
+                    | 'BRANCH' | 'REPORT' | 'SUPPLIER' | 'PURCHASE_ORDER'
+                    | 'PRESCRIPTION' | 'AUDIT' | '*';
+
+export interface Permiso {
+  acciones: Accion[];
+  alcance: Alcance;
+}
+
+// permissionMap: { [recurso: string]: Permiso }
+// Viene del JWT payload o del perfil del usuario
+export type PermissionMap = Partial<Record<Recurso, Permiso>>;
+
+// core/models/user.models.ts
+
+export type EstadoUsuario = 'ACTIVO' | 'INACTIVO' | 'BLOQUEADO' | 'SUSPENDIDO';
+
+export interface UsuarioResponse {
+  id: string;
+  empresaId: string;
+  nombreUsuario: string;
+  correo: string;
+  nombres: string;
+  apellidos: string;
+  estado: EstadoUsuario;
+  mfaHabilitado: boolean;
+  roles: string[];
+}
+
+export interface CrearUsuarioRequest {
+  empresaId: string;
+  nombreUsuario: string;
+  correo: string;
+  contrasena: string;
+  nombres: string;
+  apellidos: string;
+  dni?: string;
+  telefono?: string;
+  canalOtpPreferido?: CanalOtp;
+  mfaHabilitado?: boolean;
+  rolesIds: string[];
+  sucursalesHabilitadas: string[];
+}
+
+// core/models/problem-detail.model.ts
+
+export interface ProblemDetail {
+  type: string;               // "urn:problem-type:<slug>"
+  title: string;
+  status: number;
+  detail: string;
+  traceId?: string;
+  errors?: Record<string, string>;  // solo en validation-error (400)
+  retryAfterSeconds?: number;       // solo en rate-limit-exceeded (429)
+}
+
+export type ProblemType =
+  | 'urn:problem-type:validation-error'
+  | 'urn:problem-type:malformed-request'
+  | 'urn:problem-type:invalid-credentials'
+  | 'urn:problem-type:token-expired'
+  | 'urn:problem-type:token-revoked'
+  | 'urn:problem-type:token-invalid'
+  | 'urn:problem-type:user-blocked'
+  | 'urn:problem-type:branch-not-authorized'
+  | 'urn:problem-type:access-denied'
+  | 'urn:problem-type:otp-invalido'
+  | 'urn:problem-type:otp-expirado'
+  | 'urn:problem-type:otp-max-intentos'
+  | 'urn:problem-type:rate-limit-exceeded'
+  | 'urn:problem-type:internal-server-error';
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN VIII — SERVICIOS CORE (SOLID)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Principio S (Single Responsibility): cada servicio tiene UNA sola razón para cambiar.
+Principio D (Dependency Inversion): inyectar tokens/interfaces, no clases concretas.
+
+──────────────────────────────────────────────────────────────────────────────────
+ 8.1  TokenService  — ÚNICA responsabilidad: leer/escribir tokens
+──────────────────────────────────────────────────────────────────────────────────
+// core/auth/token.service.ts
+@Injectable({ providedIn: 'root' })
+export class TokenService {
+
+  // accessToken: SOLO en memoria. Nunca persiste.
+  private _accessToken = signal<string | null>(null);
+  readonly accessToken = this._accessToken.asReadonly();
+
+  // refreshToken: sessionStorage (pestaña) o localStorage (remember me)
+  private readonly REFRESH_KEY = 'rt';
+
+  setTokens(response: TokenResponse, rememberMe = false): void {
+    this._accessToken.set(response.accessToken);
+    const store = rememberMe ? localStorage : sessionStorage;
+    store.setItem(this.REFRESH_KEY, response.refreshToken);
+  }
+
+  getRefreshToken(): string | null {
+    return sessionStorage.getItem(this.REFRESH_KEY)
+        ?? localStorage.getItem(this.REFRESH_KEY);
+  }
+
+  clearTokens(): void {
+    this._accessToken.set(null);
+    sessionStorage.removeItem(this.REFRESH_KEY);
+    localStorage.removeItem(this.REFRESH_KEY);
+  }
+
+  isAuthenticated(): boolean {
+    return this._accessToken() !== null;
+  }
+}
+
+──────────────────────────────────────────────────────────────────────────────────
+ 8.2  AuthStore  — estado reactivo global con Signals
+──────────────────────────────────────────────────────────────────────────────────
+// core/auth/auth.store.ts
+@Injectable({ providedIn: 'root' })
+export class AuthStore {
+
+  private readonly _perfil = signal<PerfilResponse | null>(null);
+  private readonly _loading = signal(false);
+
+  readonly perfil    = this._perfil.asReadonly();
+  readonly loading   = this._loading.asReadonly();
+  readonly isLoggedIn = computed(() => this._perfil() !== null);
+  readonly nombreCompleto = computed(() => {
+    const p = this._perfil();
+    return p ? `${p.nombres} ${p.apellidos}` : '';
+  });
+  readonly permissionMap = computed<PermissionMap>(() => {
+    // El mapa de permisos puede venir del JWT (parseado) o del /auth/me
+    // Se recomienda leer del perfil para tenerlo siempre actualizado
+    return (this._perfil() as any)?.permissionMap ?? {};
+  });
+
+  setPerfil(perfil: PerfilResponse | null): void { this._perfil.set(perfil); }
+  setLoading(v: boolean): void               { this._loading.set(v); }
+}
+
+──────────────────────────────────────────────────────────────────────────────────
+ 8.3  AuthService  — ÚNICA responsabilidad: llamadas a los endpoints /auth/*
+──────────────────────────────────────────────────────────────────────────────────
+// core/auth/auth.service.ts
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+
+  private readonly http    = inject(HttpClient);
+  private readonly token   = inject(TokenService);
+  private readonly store   = inject(AuthStore);
+  private readonly router  = inject(Router);
+  private readonly env     = inject(ENVIRONMENT);   // InjectionToken
+
+  login(req: LoginRequest, rememberMe = false): Observable<TokenResponse> {
+    return this.http.post<TokenResponse>(`${this.env.apiUrl}/auth/login`, req).pipe(
+      tap(res => {
+        this.token.setTokens(res, rememberMe);
+        this.loadPerfil().subscribe();
+      })
+    );
+  }
+
+  refresh(): Observable<TokenResponse> {
+    const rt = this.token.getRefreshToken();
+    if (!rt) return throwError(() => new Error('No refresh token'));
+    return this.http.post<TokenResponse>(`${this.env.apiUrl}/auth/refresh`, { refreshToken: rt }).pipe(
+      tap(res => this.token.setTokens(res))
+    );
+  }
+
+  logout(): Observable<void> {
+    return this.http.post<void>(`${this.env.apiUrl}/auth/logout`, {}).pipe(
+      finalize(() => {
+        this.token.clearTokens();
+        this.store.setPerfil(null);
+        this.router.navigate(['/login']);
+      })
+    );
+  }
+
+  logoutAll(): Observable<void> {
+    return this.http.post<void>(`${this.env.apiUrl}/auth/logout-all`, {}).pipe(
+      finalize(() => {
+        this.token.clearTokens();
+        this.store.setPerfil(null);
+        this.router.navigate(['/login']);
+      })
+    );
+  }
+
+  switchBranch(sucursalId: string): Observable<TokenResponse> {
+    return this.http.post<TokenResponse>(
+      `${this.env.apiUrl}/auth/switch-branch/${sucursalId}`, {}
+    ).pipe(
+      tap(res => {
+        this.token.setTokens(res);   // nueva sesión, nuevo par de tokens
+        this.loadPerfil().subscribe();
+      })
+    );
+  }
+
+  loadPerfil(): Observable<PerfilResponse> {
+    return this.http.get<PerfilResponse>(`${this.env.apiUrl}/auth/me`).pipe(
+      tap(perfil => this.store.setPerfil(perfil))
+    );
+  }
+
+  requestOtp(req: SolicitarOtpRequest): Observable<void> {
+    return this.http.post<void>(`${this.env.apiUrl}/auth/otp/request`, req);
+  }
+
+  verifyOtp(req: VerificarOtpRequest): Observable<void> {
+    return this.http.post<void>(`${this.env.apiUrl}/auth/otp/verify`, req);
+  }
+}
+
+──────────────────────────────────────────────────────────────────────────────────
+ 8.4  PermissionService  — evalúa si el usuario tiene un permiso
+──────────────────────────────────────────────────────────────────────────────────
+// core/permissions/permission.service.ts
+@Injectable({ providedIn: 'root' })
+export class PermissionService {
+
+  private readonly store = inject(AuthStore);
+
+  // hasPermission('USER', 'READ') → true/false
+  hasPermission(recurso: Recurso, accion: Accion): boolean {
+    const map = this.store.permissionMap();
+    const permiso = map['*'] ?? map[recurso];  // '*' → SUPER_ADMIN tiene todo
+    if (!permiso) return false;
+    return permiso.acciones.includes(accion);
+  }
+
+  hasRole(rol: Rol): boolean {
+    return this.store.perfil()?.rol === rol;
+  }
+
+  hasAnyRole(...roles: Rol[]): boolean {
+    const userRol = this.store.perfil()?.rol;
+    return userRol ? roles.includes(userRol) : false;
+  }
+
+  // Signal reactivo para usar en computed
+  canSignal(recurso: Recurso, accion: Accion): Signal<boolean> {
+    return computed(() => this.hasPermission(recurso, accion));
+  }
+}
+
+──────────────────────────────────────────────────────────────────────────────────
+ 8.5  UsersService  — ÚNICA responsabilidad: endpoints /usuarios
+──────────────────────────────────────────────────────────────────────────────────
+// features/users/users.service.ts
+@Injectable({ providedIn: 'root' })
+export class UsersService {
+  private readonly http = inject(HttpClient);
+  private readonly env  = inject(ENVIRONMENT);
+
+  list(empresaId?: string): Observable<UsuarioResponse[]> {
+    const params = empresaId ? { empresaId } : {};
+    return this.http.get<UsuarioResponse[]>(`${this.env.apiUrl}/usuarios`, { params });
+  }
+
+  create(req: CrearUsuarioRequest): Observable<UsuarioResponse> {
+    return this.http.post<UsuarioResponse>(`${this.env.apiUrl}/usuarios`, req);
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN IX — INTERCEPTORES HTTP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Principio O (Open/Closed): agregar comportamiento sin modificar los servicios.
+Se usan interceptores FUNCIONALES (Angular 15+, recomendado en Angular 21).
+
+──────────────────────────────────────────────────────────────────────────────────
+ 9.1  authInterceptor  — agrega el token en cada request autenticada
+──────────────────────────────────────────────────────────────────────────────────
+// core/interceptors/auth.interceptor.ts
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = inject(TokenService).accessToken();
+  if (!token) return next(req);
+
+  const authReq = req.clone({
+    setHeaders: { Authorization: `Bearer ${token}` }
+  });
+  return next(authReq);
+};
+
+──────────────────────────────────────────────────────────────────────────────────
+ 9.2  refreshInterceptor  — renueva el token al recibir 401 y reintenta
+──────────────────────────────────────────────────────────────────────────────────
+// core/interceptors/refresh.interceptor.ts
+export const refreshInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService  = inject(AuthService);
+  const tokenService = inject(TokenService);
+  const router       = inject(Router);
+
+  // No interceptar las llamadas de login y refresh (evitar bucle infinito)
+  const skipPaths = ['/auth/login', '/auth/refresh'];
+  if (skipPaths.some(p => req.url.includes(p))) return next(req);
+
+  return next(req).pipe(
+    catchError(err => {
+      if (err instanceof HttpErrorResponse && err.status === 401) {
+        const problem = err.error as ProblemDetail;
+
+        // Si el token expiró → intentar renovar
+        if (problem?.type === 'urn:problem-type:token-expired') {
+          return authService.refresh().pipe(
+            switchMap(res => {
+              // Reintentar la request original con el nuevo token
+              const retried = req.clone({
+                setHeaders: { Authorization: `Bearer ${res.accessToken}` }
+              });
+              return next(retried);
+            }),
+            catchError(refreshErr => {
+              // El refreshToken también expiró o fue revocado → logout
+              tokenService.clearTokens();
+              router.navigate(['/login']);
+              return throwError(() => refreshErr);
+            })
+          );
+        }
+
+        // Token revocado o inválido → logout directo
+        tokenService.clearTokens();
+        router.navigate(['/login']);
+      }
+      return throwError(() => err);
+    })
+  );
+};
+
+NOTA: para evitar múltiples llamadas a /auth/refresh simultáneas, implementar
+un "refresh lock" usando un Subject compartido:
+
+  // Solo una llamada a /refresh a la vez; las demás esperan el resultado
+  private refreshInFlight$: Observable<TokenResponse> | null = null;
+
+  refresh(): Observable<TokenResponse> {
+    if (this.refreshInFlight$) return this.refreshInFlight$;
+    this.refreshInFlight$ = this.http.post<TokenResponse>(...).pipe(
+      tap(res => this.token.setTokens(res)),
+      finalize(() => this.refreshInFlight$ = null),
+      shareReplay(1)
+    );
+    return this.refreshInFlight$;
+  }
+
+──────────────────────────────────────────────────────────────────────────────────
+ 9.3  errorInterceptor  — mapea ProblemDetail a mensajes de UI
+──────────────────────────────────────────────────────────────────────────────────
+// core/interceptors/error.interceptor.ts
+export const errorInterceptor: HttpInterceptorFn = (req, next) => {
+  const notify = inject(NotificationService);  // tu servicio de toasts/snackbar
+
+  return next(req).pipe(
+    catchError((err: HttpErrorResponse) => {
+      if (err.error && typeof err.error === 'object' && 'type' in err.error) {
+        const problem = err.error as ProblemDetail;
+
+        switch (problem.type as ProblemType) {
+          case 'urn:problem-type:user-blocked':
+            notify.warn(`Cuenta bloqueada. ${problem.detail}`);
+            break;
+          case 'urn:problem-type:rate-limit-exceeded':
+            const retry = err.headers.get('Retry-After') ?? '?';
+            notify.warn(`Demasiadas peticiones. Reintenta en ${retry}s.`);
+            break;
+          case 'urn:problem-type:validation-error':
+            // No notificar aquí: el componente lee los errores de campo del error.error.errors
+            break;
+          case 'urn:problem-type:internal-server-error':
+            notify.error(`Error del servidor. TraceId: ${problem.traceId}`);
+            break;
+        }
+      }
+      return throwError(() => err);
+    })
+  );
+};
+
+──────────────────────────────────────────────────────────────────────────────────
+ 9.4  Registro en app.config.ts
+──────────────────────────────────────────────────────────────────────────────────
+// app.config.ts
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideRouter(appRoutes, withComponentInputBinding()),
+    provideHttpClient(
+      withInterceptors([
+        authInterceptor,        // 1º — agrega el token
+        refreshInterceptor,     // 2º — maneja 401 y renueva
+        errorInterceptor,       // 3º — notificaciones globales
+      ])
+    ),
+    provideAnimations(),
+    {
+      provide: APP_INITIALIZER,
+      useFactory: authInitializer,
+      deps: [AuthService, TokenService],
+      multi: true
+    },
+    { provide: ENVIRONMENT, useValue: environment }
+  ]
+};
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN X — GUARDS Y DIRECTIVES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+──────────────────────────────────────────────────────────────────────────────────
+ 10.1  authGuard  — protege rutas que requieren autenticación
+──────────────────────────────────────────────────────────────────────────────────
+// core/guards/auth.guard.ts
+export const authGuard: CanActivateFn = () => {
+  const token  = inject(TokenService);
+  const router = inject(Router);
+
+  if (token.isAuthenticated()) return true;
+  return router.parseUrl('/login');
+};
+
+──────────────────────────────────────────────────────────────────────────────────
+ 10.2  permissionGuard  — protege rutas que requieren permiso específico
+──────────────────────────────────────────────────────────────────────────────────
+// core/guards/permission.guard.ts
+// Uso en rutas: canActivate: [authGuard, permissionGuard('USER', 'READ')]
+export const permissionGuard = (recurso: Recurso, accion: Accion): CanActivateFn => {
+  return () => {
+    const permisos = inject(PermissionService);
+    const router   = inject(Router);
+
+    if (permisos.hasPermission(recurso, accion)) return true;
+    return router.parseUrl('/403');  // o mostrar componente Forbidden
+  };
+};
+
+──────────────────────────────────────────────────────────────────────────────────
+ 10.3  HasPermissionDirective  — oculta elementos sin permiso
+──────────────────────────────────────────────────────────────────────────────────
+// shared/directives/has-permission.directive.ts
+// Uso: <button *appHasPermission="'USER:CREATE'">Crear usuario</button>
+@Directive({
+  selector: '[appHasPermission]',
+  standalone: true
+})
+export class HasPermissionDirective {
+  private readonly vcr        = inject(ViewContainerRef);
+  private readonly template   = inject(TemplateRef);
+  private readonly permisos   = inject(PermissionService);
+
+  @Input() set appHasPermission(value: string) {
+    const [recurso, accion] = value.split(':') as [Recurso, Accion];
+    if (this.permisos.hasPermission(recurso, accion)) {
+      this.vcr.createEmbeddedView(this.template);
+    } else {
+      this.vcr.clear();
+    }
+  }
+}
+
+──────────────────────────────────────────────────────────────────────────────────
+ 10.4  APP_INITIALIZER  — intenta renovar sesión al arrancar la app
+──────────────────────────────────────────────────────────────────────────────────
+// core/auth/auth.initializer.ts
+export function authInitializer(
+  authService: AuthService,
+  tokenService: TokenService
+): () => Promise<void> {
+  return () => {
+    const rt = tokenService.getRefreshToken();
+    if (!rt) return Promise.resolve();
+
+    return firstValueFrom(
+      authService.refresh().pipe(
+        switchMap(() => authService.loadPerfil()),
+        catchError(() => {
+          tokenService.clearTokens();
+          return of(null);
+        })
+      )
+    ).then(() => void 0);
+  };
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XI — CONFIGURACIÓN DE RUTAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// app.routes.ts
+export const appRoutes: Routes = [
+  { path: '',
+    redirectTo: '/app/dashboard',
+    pathMatch: 'full' },
+
+  { path: 'login',
+    loadComponent: () => import('./features/auth/login/login.component')
+                          .then(m => m.LoginComponent) },
+
+  { path: 'app',
+    loadComponent: () => import('./features/shell/shell.component')
+                          .then(m => m.ShellComponent),
+    canActivate: [authGuard],
+    children: [
+      { path: 'usuarios',
+        loadChildren: () => import('./features/users/users.routes')
+                             .then(m => m.usersRoutes),
+        canActivate: [permissionGuard('USER', 'READ')] },
+    ]
+  },
+
+  { path: '403',
+    loadComponent: () => import('./shared/components/forbidden.component')
+                          .then(m => m.ForbiddenComponent) },
+
+  { path: '**', redirectTo: '/app/dashboard' }
+];
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XII — TAREAS PASO A PASO (ORDEN DE IMPLEMENTACIÓN)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Las tareas están ordenadas por dependencia. No saltar hacia adelante.
+Cada tarea es autocontenida y verificable.
+
+════════════════════════════════════════
+ SPRINT 1 — FUNDACIÓN (sin UI, sin API)
+════════════════════════════════════════
+
+TAREA 01 — Crear proyecto Angular 21
+  Comando : ng new pharmacy-front --standalone --routing --style=scss
+  Verificar: ng serve arranca sin errores en http://localhost:4200
+
+TAREA 02 — Configurar environments
+  Archivos  : src/environments/environment.ts y environment.prod.ts
+  Contenido : { apiUrl: 'http://localhost:8080', production: false }
+  Crear     : InjectionToken<Environment> en core/tokens/environment.token.ts
+  Verificar : inject(ENVIRONMENT).apiUrl resuelve el valor correcto
+
+TAREA 03 — Crear todos los modelos TypeScript
+  Archivo : core/models/auth.models.ts     (LoginRequest, TokenResponse, PerfilResponse, etc.)
+  Archivo : core/models/permission.models.ts (Recurso, Accion, Alcance, Rol, PermissionMap)
+  Archivo : core/models/user.models.ts     (UsuarioResponse, CrearUsuarioRequest)
+  Archivo : core/models/problem-detail.model.ts (ProblemDetail, ProblemType)
+  Verificar: tsc sin errores en los modelos
+
+TAREA 04 — Implementar TokenService
+  Archivo : core/auth/token.service.ts
+  Debe    : signal _accessToken, getRefreshToken(), setTokens(), clearTokens(), isAuthenticated()
+  Verificar: unit test — setTokens guarda en sessionStorage, clearTokens limpia todo
+
+TAREA 05 — Implementar AuthStore
+  Archivo : core/auth/auth.store.ts
+  Debe    : signals _perfil, _loading, computed isLoggedIn, nombreCompleto, permissionMap
+  Verificar: computed isLoggedIn() es true cuando perfil no es null
+
+════════════════════════════════════════
+ SPRINT 2 — INTERCEPTORES Y BOOTSTRAP
+════════════════════════════════════════
+
+TAREA 06 — Implementar authInterceptor
+  Archivo : core/interceptors/auth.interceptor.ts
+  Debe    : leer TokenService.accessToken(), clonar request con header Authorization
+  Verificar: con DevTools Network, requests a /auth/me llevan el header
+
+TAREA 07 — Implementar refreshInterceptor (con refresh lock)
+  Archivo : core/interceptors/refresh.interceptor.ts
+  Debe    : capturar 401 token-expired, llamar /auth/refresh, reintentar; capturar otros 401 → logout
+  Importante: shareReplay(1) para evitar llamadas duplicadas simultáneas a /refresh
+  Verificar: simular expiración de token, verificar que se renueva automáticamente sin que el usuario lo note
+
+TAREA 08 — Implementar errorInterceptor
+  Archivo : core/interceptors/error.interceptor.ts
+  Debe    : leer problem.type, mostrar toast para rate-limit y 500, no hacer nada para 400 (el componente lo maneja)
+  Verificar: rate-limit → aparece mensaje con tiempo de Retry-After
+
+TAREA 09 — Implementar AuthService (solo login y refresh)
+  Archivo : core/auth/auth.service.ts
+  Métodos : login(), refresh(), logout(), logoutAll(), loadPerfil()
+  Verificar: login() con credenciales correctas guarda tokens y carga perfil
+
+TAREA 10 — Implementar authInitializer y registrar en app.config.ts
+  Archivo : core/auth/auth.initializer.ts
+  Debe    : al arrancar, leer refreshToken del storage y renovar sesión
+  Registrar: APP_INITIALIZER en app.config.ts junto a provideHttpClient(withInterceptors([...]))
+  Verificar: recargar la página con sesión activa — el perfil se carga sin pedir login
+
+════════════════════════════════════════
+ SPRINT 3 — FEATURE LOGIN
+════════════════════════════════════════
+
+TAREA 11 — Implementar LoginComponent
+  Archivo : features/auth/login/login.component.ts
+  Debe    :
+    - ReactiveForm: nombreUsuario (required, maxLength 50) + contrasena (required)
+    - Checkbox "Recordarme" que pasa rememberMe al AuthService.login()
+    - Signal isLoading = signal(false)
+    - En submit: authService.login(form.value, rememberMe).subscribe(...)
+    - En éxito: router.navigate(['/app/dashboard'])
+    - En error: leer err.error.type y mostrar mensajes específicos:
+        invalid-credentials → "Usuario o contraseña incorrectos"
+        user-blocked        → "Cuenta bloqueada. Intenta en X minutos"
+        rate-limit-exceeded → "Demasiados intentos. Reintenta en Xs"
+        validation-error    → marcar campos con error según err.error.errors
+  Verificar: login exitoso navega al dashboard, credenciales inválidas muestra mensaje sin revelar cuál es incorrecto (usar mismo mensaje para ambos campos)
+
+TAREA 12 — Agregar authGuard al ShellComponent
+  Archivo : app.routes.ts
+  Debe    : la ruta /app usa canActivate: [authGuard]
+  Verificar: navegar a /app sin sesión redirige a /login
+
+TAREA 13 — Implementar ShellComponent con LogoutButton y perfil de usuario
+  Archivo : features/shell/shell.component.ts
+  Debe    :
+    - Inyectar AuthStore para mostrar nombreCompleto()
+    - Botón logout que llama authService.logout()
+    - Sucursal activa visible en la navbar
+  Verificar: el nombre del usuario aparece en el header
+
+════════════════════════════════════════
+ SPRINT 4 — BRANCH SWITCHER
+════════════════════════════════════════
+
+TAREA 14 — Implementar BranchSwitcherComponent
+  Archivo : features/shell/branch-switcher.component.ts
+  Debe    :
+    - Leer AuthStore.perfil().sucursalesDisponibles
+    - Select o dropdown con las sucursales
+    - Al cambiar: authService.switchBranch(sucursalId).subscribe(...)
+    - En éxito: la UI refleja la nueva sucursal activa (signal automático)
+    - Deshabilitar si solo hay una sucursal
+  Método en AuthService: switchBranch(sucursalId: string) → Observable<TokenResponse>
+  Verificar: cambiar sucursal emite nuevos tokens y el perfil se actualiza
+
+════════════════════════════════════════
+ SPRINT 5 — SISTEMA DE PERMISOS
+════════════════════════════════════════
+
+TAREA 15 — Implementar PermissionService
+  Archivo : core/permissions/permission.service.ts
+  Debe    :
+    - hasPermission(recurso, accion): boolean — leer AuthStore.permissionMap()
+    - hasRole(rol): boolean
+    - canSignal(recurso, accion): Signal<boolean>
+    - SUPER_ADMIN tiene '*' en el mapa → acceso total
+  Verificar: hasPermission('USER', 'READ') devuelve true para ADMIN_EMPRESA, false para CAJERO
+
+TAREA 16 — Implementar HasPermissionDirective
+  Archivo : shared/directives/has-permission.directive.ts
+  Uso     : <button *appHasPermission="'USER:CREATE'">Nuevo usuario</button>
+  Debe    : structural directive que crea/destruye el view según el permiso
+  Verificar: el botón no aparece para rol sin permiso CREATE sobre USER
+
+TAREA 17 — Implementar permissionGuard
+  Archivo : core/guards/permission.guard.ts
+  Uso     : canActivate: [permissionGuard('USER', 'READ')]
+  Verificar: navegar a /app/usuarios sin permiso redirige a /403
+
+════════════════════════════════════════
+ SPRINT 6 — FEATURE OTP
+════════════════════════════════════════
+
+TAREA 18 — Implementar OtpRequestComponent
+  Archivo : features/auth/otp/otp-request.component.ts
+  Cuándo  : después del login si mfaHabilitado === true Y proposito === LOGIN_2FA
+            O cuando el usuario quiere cambiar contraseña
+  Debe    :
+    - Select de canal: EMAIL | SMS | WHATSAPP
+    - Botón "Enviar código" → authService.requestOtp({ canal, proposito: 'LOGIN_2FA' })
+    - Respuesta 202 → navegar a OtpVerifyComponent con el canal seleccionado
+    - Manejar 429 rate-limit → mostrar Retry-After countdown
+  Verificar: el 202 muestra mensaje "Código enviado a tu correo/teléfono"
+
+TAREA 19 — Implementar OtpVerifyComponent
+  Archivo : features/auth/otp/otp-verify.component.ts
+  Debe    :
+    - Input para el código (maxLength 6, pattern \d{6})
+    - Botón "Verificar" → authService.verifyOtp({ codigo, proposito })
+    - 204 → navegar a destino (dashboard o flujo de reset password)
+    - 422 otp-invalido     → "Código incorrecto. Intentos restantes: X"
+    - 422 otp-expirado     → "Código expirado. Solicita uno nuevo" + botón reenviar
+    - 422 otp-max-intentos → "Intentos agotados. Solicita un nuevo código"
+    - 429 rate-limit       → deshabilitar botón por Retry-After segundos
+    - Implementar countdown para los 5 min de validez del OTP
+  Verificar: el flujo completo solicitud → verificación funciona de punta a punta
+
+════════════════════════════════════════
+ SPRINT 7 — FEATURE USUARIOS
+════════════════════════════════════════
+
+TAREA 20 — Implementar UsersService
+  Archivo : features/users/users.service.ts
+  Métodos : list(empresaId?), create(req)
+  Verificar: GET /usuarios devuelve la lista correcta para el rol activo
+
+TAREA 21 — Implementar UserListComponent
+  Archivo : features/users/user-list.component.ts
+  Debe    :
+    - Signal users = signal<UsuarioResponse[]>([])
+    - Signal loading = signal(false)
+    - Tabla con nombre, correo, rol, estado, botón acciones
+    - Ocultar botón "Crear" si no tiene USER:CREATE (usar HasPermissionDirective)
+    - Manejar 403 access-denied → mensaje "Sin permisos suficientes"
+  Verificar: la tabla se carga al entrar a /app/usuarios
+
+TAREA 22 — Implementar UserCreateComponent
+  Archivo : features/users/user-create.component.ts
+  Debe    :
+    - ReactiveForm con todos los campos de CrearUsuarioRequest
+    - Validación client-side mirroring la validación del backend
+    - Error handling: leer err.error.errors en 400 y marcar campos individuales
+    - En éxito: navegar a lista de usuarios con mensaje de confirmación
+  Verificar: crear un usuario con el rol CAJERO, verificar que aparece en la lista
+
+════════════════════════════════════════
+ SPRINT 8 — LOGOUT Y SEGURIDAD FINAL
+════════════════════════════════════════
+
+TAREA 23 — Implementar logout-all con confirmación
+  Archivo : features/shell/shell.component.ts
+  Debe    :
+    - Dialog de confirmación: "¿Cerrar sesión en todos los dispositivos?"
+    - Al confirmar: authService.logoutAll()
+    - Limpiar tokens locales aunque el servidor falle (finalize())
+  Verificar: después del logout-all el usuario no puede usar el mismo refreshToken
+
+TAREA 24 — Manejar expiración de sesión mientras el usuario está activo
+  Archivo : core/auth/session-monitor.service.ts (opcional pero recomendado)
+  Debe    :
+    - Parsear accessExpiraEn del TokenResponse
+    - Programar renovación automática 1 min antes de que expire
+    - Usar setInterval o timer() de RxJS
+  Verificar: la sesión no expira nunca mientras el usuario está activo en la app
+
+TAREA 25 — Manejo de tab/window focus (seguridad)
+  Debe    :
+    - Escuchar el evento 'visibilitychange' del documento
+    - Al enfocar la pestaña: verificar que el accessToken sigue siendo válido
+    - Si expiró: intentar refresh silencioso
+  Verificar: después de > 15 min sin actividad y volver a la pestaña, la sesión se renueva sin redirect al login
+
+════════════════════════════════════════
+ SPRINT 9 — CALIDAD Y PRODUCCIÓN
+════════════════════════════════════════
+
+TAREA 26 — CORS en desarrollo
+  El backend Spring Boot NO tiene CORS habilitado (no es necesario en el BFF pattern).
+  Configurar proxy en Angular para dev:
+  Archivo : proxy.conf.json
+    { "/auth": { "target": "http://localhost:8080", "changeOrigin": true },
+      "/usuarios": { "target": "http://localhost:8080", "changeOrigin": true },
+      "/actuator": { "target": "http://localhost:8080", "changeOrigin": true } }
+  En angular.json: "options": { "proxyConfig": "proxy.conf.json" }
+  En ambiente dev usar apiUrl: '' (relativo) para que el proxy funcione
+  Verificar: ng serve con proxy, las requests van al backend sin error de CORS
+
+TAREA 27 — Manejo de 429 con countdown visual
+  Archivo : shared/components/rate-limit-message.component.ts
+  Debe    :
+    - Leer el header Retry-After de la respuesta 429
+    - Mostrar countdown regresivo: "Puedes reintentar en 47 segundos"
+    - Deshabilitar el formulario/botón durante el período de espera
+  Verificar: rate-limit en /auth/login → el botón se deshabilita por el tiempo indicado
+
+TAREA 28 — Agregar traceId en reportes de error a usuario
+  En errorInterceptor: cuando hay 500, mostrar "Error ID: <traceId>"
+  El soporte puede correlacionar con los logs del servidor con ese ID
+  Verificar: simular un 500, confirmar que el traceId aparece en el mensaje de error de UI
+
+TAREA 29 — Tests unitarios de servicios y guards
+  Probar  :
+    - TokenService.setTokens / clearTokens / isAuthenticated
+    - PermissionService.hasPermission con distintos mapas
+    - authGuard: redirige a /login sin token, pasa con token
+    - permissionGuard: deniega sin permiso, aprueba con permiso
+    - authInterceptor: agrega header solo cuando hay token
+  Herramienta: Jest (recomendado con Angular 21) o Karma/Jasmine
+
+TAREA 30 — Build de producción y verificación final
+  Comando : ng build --configuration production
+  Verificar:
+    - environment.prod.ts apunta a la URL real del BFF
+    - No hay console.log de debug
+    - Los tokens no aparecen en los logs de la consola
+    - HTTPS en producción (el backend debe forzarlo también)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XIII — FLUJOS COMPLETOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+── FLUJO A: Login estándar (sin MFA) ────────────────────────────────────────────
+
+  [Login Form]
+      │
+      ├─ POST /auth/login { nombreUsuario, contrasena }
+      │
+      ├─ 200 OK → guardar accessToken (memoria) + refreshToken (storage)
+      │         → GET /auth/me → guardar perfil en AuthStore
+      │         → router.navigate(['/app/dashboard'])
+      │
+      ├─ 401 invalid-credentials → mostrar "Credenciales incorrectas"
+      ├─ 403 user-blocked        → mostrar "Cuenta bloqueada hasta <hora>"
+      └─ 429 rate-limit          → deshabilitar botón X segundos (Retry-After)
+
+── FLUJO B: Login con OTP 2FA (mfaHabilitado = true) ────────────────────────────
+
+  [Login Form]
+      │
+      ├─ POST /auth/login → 200 (tokens normales, pero el usuario tiene mfaHabilitado)
+      │
+      ├─ El frontend detecta perfil.mfaHabilitado === true
+      │
+      ├─ Navegar a /auth/otp-request con proposito='LOGIN_2FA'
+      │
+      ├─ POST /auth/otp/request { canal: 'EMAIL', proposito: 'LOGIN_2FA' }
+      │   └─ 202 Accepted → navegar a /auth/otp-verify
+      │
+      ├─ POST /auth/otp/verify { codigo: '123456', proposito: 'LOGIN_2FA' }
+      │   ├─ 204 → el usuario queda 2FA verificado → navegar al dashboard
+      │   ├─ 422 otp-invalido → "Código incorrecto"
+      │   ├─ 422 otp-expirado → "Expirado. Solicita otro"
+      │   └─ 422 otp-max-intentos → "Agotado. Solicita un código nuevo"
+
+── FLUJO C: Renovación silenciosa del accessToken ───────────────────────────────
+
+  [Cualquier request al backend]
+      │
+      ├─ 401 token-expired
+      │
+      ├─ refreshInterceptor captura el error
+      │
+      ├─ POST /auth/refresh { refreshToken: <del storage> }
+      │
+      ├─ 200 → nuevo accessToken en memoria + nuevo refreshToken en storage
+      │       → reintentar la request original con el nuevo token
+      │       → el usuario NO nota nada
+      │
+      └─ 401 (refresh expirado/revocado)
+             → clearTokens()
+             → router.navigate(['/login'])
+             → mostrar "Tu sesión expiró. Vuelve a ingresar"
+
+── FLUJO D: Cambio de sucursal ──────────────────────────────────────────────────
+
+  [BranchSwitcher] usuario selecciona "Botica San Juan — Sur"
+      │
+      ├─ POST /auth/switch-branch/{uuid-sur}
+      │
+      ├─ 200 → nuevo par de tokens (nueva sesion_id, nueva sucursal activa)
+      │       → reemplazar accessToken (memoria) + refreshToken (storage)
+      │       → GET /auth/me → actualizar perfil (sucursalActiva cambia)
+      │       → la UI refleja la nueva sucursal automáticamente (signals)
+      │
+      └─ 403 branch-not-authorized → "No tienes acceso a esa sucursal"
+
+── FLUJO E: Acceso a endpoint protegido por permiso ─────────────────────────────
+
+  [UserListComponent.ngOnInit]
+      │
+      ├─ GET /usuarios
+      │
+      ├─ 200 → mostrar lista
+      │
+      ├─ 403 access-denied → mostrar "No tienes permisos para ver usuarios"
+      │                     → (el guard ya debería haberlo impedido;
+      │                        este caso es defensa en profundidad)
+      │
+      └─ 401 token-expired → refreshInterceptor renueva y reintenta automáticamente
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XIV — CHECKLIST DE SEGURIDAD ANTES DE PRODUCCIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[ ] accessToken NUNCA escrito en localStorage (solo memoria)
+[ ] refreshToken en sessionStorage mínimo; localStorage solo con "Recordarme" explícito
+[ ] Ningún token ni contraseña en console.log
+[ ] Headers Authorization nunca loggueados en la consola del navegador
+[ ] El interceptor limpia tokens en CUALQUIER 401 no-recuperable (revocado, inválido)
+[ ] Logout y logout-all limpian tokens aunque el servidor devuelva error (finalize)
+[ ] El formulario de login no autocompleta la contraseña en producción (autocomplete="off" en el input — o usar autocomplete="current-password" para password managers)
+[ ] Rate-limit 429 desactiva el botón para evitar que el usuario reintente durante el bloqueo
+[ ] traceId mostrado en errores 500 para facilitar soporte (sin exponer stack traces)
+[ ] HTTPS habilitado en producción (certificado TLS en el servidor)
+[ ] CSP (Content Security Policy) configurado para evitar XSS
+[ ] Los permisos del frontend son SOLO UI decorativa; el backend valida nuevamente en cada request
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XV — RESUMEN DE PRINCIPIOS SOLID APLICADOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+S — Single Responsibility
+    TokenService     → solo maneja el almacenamiento de tokens
+    AuthService      → solo llama a la API de autenticación
+    AuthStore        → solo mantiene el estado reactivo global
+    PermissionService→ solo evalúa permisos
+    UsersService     → solo llama a /usuarios
+    Cada interceptor tiene UNA sola responsabilidad (auth / refresh / error)
+
+O — Open/Closed
+    Los interceptores agregan comportamiento (auth header, refresh, error handling)
+    sin modificar AuthService ni los servicios de feature
+    Para agregar un nuevo comportamiento HTTP: crear un nuevo interceptor funcional
+
+L — Liskov Substitution
+    TokenService podría intercambiarse por TokenServiceInMemory o TokenServiceSecureStorage
+    siempre que implementen la misma interfaz (contrato de métodos)
+    Útil para tests: InMemoryTokenService no toca browser APIs
+
+I — Interface Segregation
+    PermissionService expone solo lo que cada consumidor necesita:
+      - Componentes usan hasPermission()
+      - Guards usan hasPermission() directamente
+      - Templates usan HasPermissionDirective
+    No hay un "mega-service" que mezcle auth + permisos + perfil
+
+D — Dependency Inversion
+    Los componentes inyectan interfaces (PermissionService, AuthStore)
+    no dependen de HttpClient directamente
+    La URL del API se inyecta vía InjectionToken<Environment>
+    Los interceptores son funciones que reciben dependencias vía inject()
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SECCIÓN XVI — DATOS DE PRUEBA (credenciales demo del backend)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Contraseña universal: Demo2026!
+
+Usuario          Rol               Empresa
+────────────────────────────────────────────────────────────
+superadmin       SUPER_ADMIN       — (acceso a todo)
+admin.bsj        ADMIN_EMPRESA     Botica San Juan
+jefe.bsj.centro  ADMIN_SUCURSAL    Botica San Juan — Centro
+farma.bsj        FARMACEUTICO      Botica San Juan
+cajero.bsj       CAJERO            Botica San Juan
+auditor.bsj      AUDITOR           Botica San Juan
+admin.fv         ADMIN_EMPRESA     Farmacia Vida
+jefe.fv.plaza    ADMIN_SUCURSAL    Farmacia Vida — Plaza
+farma.fv         FARMACEUTICO      Farmacia Vida
+cajero.fv        CAJERO            Farmacia Vida
+auditor.fv       AUDITOR           Farmacia Vida
+
+Endpoints públicos (no requieren token):
+  GET  http://localhost:8080/actuator/health   → { status: "UP" }
+  GET  http://localhost:8080/actuator/info     → { app: { name, description, java-version } }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FIN DEL DOCUMENTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

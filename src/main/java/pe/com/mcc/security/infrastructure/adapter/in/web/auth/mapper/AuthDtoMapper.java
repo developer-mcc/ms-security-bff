@@ -6,6 +6,7 @@ import org.jspecify.annotations.NullMarked;
 import org.springframework.stereotype.Component;
 import pe.com.mcc.security.application.auth.port.in.AuthenticateCommand;
 import pe.com.mcc.security.application.auth.port.in.RefreshTokenCommand;
+import pe.com.mcc.security.application.auth.port.in.SolicitarResetResult;
 import pe.com.mcc.security.application.auth.port.in.SwitchBranchCommand;
 import pe.com.mcc.security.domain.auth.model.Credentials;
 import pe.com.mcc.security.domain.auth.model.DispositivoInfo;
@@ -14,6 +15,7 @@ import pe.com.mcc.security.domain.user.model.PerfilUsuario;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.LoginRequest;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.PerfilResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.RefreshRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.SolicitarResetResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.SucursalInfo;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.TokenResponse;
 import pe.com.mcc.security.infrastructure.adapter.out.security.jwt.UserPrincipal;
@@ -49,6 +51,14 @@ public class AuthDtoMapper {
         pair.refresh().jwt(),
         pair.refresh().expiraEn(),
         "Bearer");
+  }
+
+  public SolicitarResetResponse toSolicitarResetResponse(SolicitarResetResult result) {
+    List<SolicitarResetResponse.CanalInfo> canales =
+        result.canalesDisponibles().stream()
+            .map(c -> new SolicitarResetResponse.CanalInfo(c.tipo(), c.valorMascarado()))
+            .toList();
+    return new SolicitarResetResponse(result.preResetToken(), canales);
   }
 
   public PerfilResponse toPerfilResponse(PerfilUsuario perfil) {

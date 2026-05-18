@@ -13,7 +13,9 @@
     { "key": "perfilUsuarioId",  "value": "",                     "type": "string" },
     { "key": "sucursalActiva",   "value": "",                     "type": "string" },
     { "key": "currentUser",      "value": "",                     "type": "string" },
-    { "key": "otpCodigo",        "value": "",                     "type": "string" }
+    { "key": "otpCodigo",        "value": "",                     "type": "string" },
+    { "key": "preResetToken",    "value": "",                     "type": "string" },
+    { "key": "resetToken",       "value": "",                     "type": "string" }
   ],
   "item": [
     {
@@ -1395,6 +1397,419 @@
             "body": { "mode": "raw", "raw": "{\n  \"nombreUsuario\": \"admin.bsj\",\n  \"contrasena\": \"Demo2026!\"\n}" },
             "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
             "description": "Espera ~1 minuto después de RL-06 para que el bucket se recargue (política: 5 req/min). Verifica que los headers `X-RateLimit-*` están presentes en **toda** respuesta de un endpoint rate-limited, no solo en el 429."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Forgot Password",
+      "description": "Flujo de recuperación de contraseña en 3 pasos:\n\n**Paso 1** — `POST /auth/password/forgot`: envía el contacto (email o teléfono) + canal (EMAIL/SMS/WHATSAPP). Si existe la cuenta, genera una sesión de reset y emite el OTP por el canal indicado. Responde 202 con `preResetToken` (UUID de la sesión) y `canalesDisponibles` (valores enmascarados).\n\n**Paso 2** — `POST /auth/password/forgot/verify`: verifica el OTP. Si es correcto, responde 200 con `resetToken` (JWT de corta duración).\n\n**Paso 3** — `PATCH /auth/password/reset`: cambia la contraseña usando el `resetToken` del paso anterior. Responde 204 sin cuerpo.\n\n**Todos los endpoints son públicos** (no requieren `Authorization` header).\n\n**Rate limit** `/auth/password/forgot`: 3 req / 10 min / IP.\n\n**Nota**: obtén el código OTP consultando `sec.codigos_otp` directamente o leyendo los logs de `OtpNotificationListener`.",
+      "item": [
+        {
+          "name": "Paso 1 — Solicitar por EMAIL (202)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('preResetToken presente y es UUID', () => {",
+                  "  pm.expect(body.preResetToken).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.preResetToken).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.collectionVariables.set('preResetToken', body.preResetToken);",
+                  "  console.log('preResetToken guardado:', body.preResetToken);",
+                  "});",
+                  "",
+                  "pm.test('canalesDisponibles es array no vacío', () => {",
+                  "  pm.expect(body.canalesDisponibles).to.be.an('array').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('cada canal tiene tipo y valorMascarado', () => {",
+                  "  body.canalesDisponibles.forEach(c => {",
+                  "    pm.expect(c.tipo).to.be.a('string').and.not.empty;",
+                  "    pm.expect(c.valorMascarado).to.be.a('string').and.not.empty;",
+                  "  });",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacto\": \"admin@botica.com\",\n  \"canal\": \"EMAIL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot"]
+            },
+            "description": "Busca la cuenta por correo (EmailContactoLookupStrategy). Genera una ResetSesion, emite el OTP por EMAIL y guarda `preResetToken` en la variable de colección para los pasos siguientes."
+          }
+        },
+        {
+          "name": "Paso 1 — Solicitar por SMS (202)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('preResetToken presente', () => {",
+                  "  pm.expect(body.preResetToken).to.be.a('string').and.not.empty;",
+                  "  pm.collectionVariables.set('preResetToken', body.preResetToken);",
+                  "  console.log('preResetToken guardado (SMS):', body.preResetToken);",
+                  "});",
+                  "",
+                  "pm.test('canalesDisponibles contiene SMS', () => {",
+                  "  const tipos = body.canalesDisponibles.map(c => c.tipo);",
+                  "  pm.expect(tipos).to.include('SMS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacto\": \"987654321\",\n  \"canal\": \"SMS\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot"]
+            },
+            "description": "Busca la cuenta por teléfono (TelefonoContactoLookupStrategy). Canal SMS."
+          }
+        },
+        {
+          "name": "Paso 1 — contacto no registrado (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail contacto-no-registrado', () => {",
+                  "  pm.expect(body.type).to.include('contacto-no-registrado');",
+                  "  pm.expect(body.status).to.eql(404);",
+                  "  pm.expect(body.title).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.detail).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacto\": \"noexiste@nada.com\",\n  \"canal\": \"EMAIL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot"]
+            },
+            "description": "Correo no asociado a ninguna cuenta → ContactoNoRegistradoException → 404 contacto-no-registrado."
+          }
+        },
+        {
+          "name": "Paso 1 — body inválido (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail validation-error con errors', () => {",
+                  "  pm.expect(body.type).to.include('validation-error');",
+                  "  pm.expect(body.errors).to.be.an('object');",
+                  "  console.log('Errores de validación:', body.errors);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacto\": \"\",\n  \"canal\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot"]
+            },
+            "description": "@NotBlank en contacto y @NotNull en canal → MethodArgumentNotValidException → 400 con mapa errors."
+          }
+        },
+        {
+          "name": "Paso 1 — rate limit forgot-password (3+1 → 429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('429 Too Many Requests', () => pm.response.to.have.status(429));",
+                  "",
+                  "pm.test('Content-Type es application/problem+json', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail rate-limit-exceeded', () => {",
+                  "  pm.expect(body.type).to.include('rate-limit-exceeded');",
+                  "  pm.expect(body.status).to.eql(429);",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('X-RateLimit-Limit == 3 (política forgot-password)', () => {",
+                  "  pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.eql('3');",
+                  "});",
+                  "",
+                  "pm.test('Retry-After presente', () => {",
+                  "  pm.expect(pm.response.headers.get('Retry-After')).to.match(/^[1-9]\\d*$/);",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacto\": \"noexiste@nada.com\",\n  \"canal\": \"EMAIL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot"]
+            },
+            "description": "Ejecutar 4 veces seguidas (o tras 3 intentos previos). Política `forgot-password`: 3 req / 10 min / IP. El 4to request es interceptado por el RateLimitFilter antes del controller → 429."
+          }
+        },
+        {
+          "name": "Paso 2 — Verificar OTP correcto (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('resetToken presente y no vacío', () => {",
+                  "  pm.expect(body.resetToken).to.be.a('string').and.not.empty;",
+                  "  pm.collectionVariables.set('resetToken', body.resetToken);",
+                  "  console.log('resetToken guardado:', body.resetToken.substring(0, 20) + '...');",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preResetToken\": \"{{preResetToken}}\",\n  \"codigo\": \"{{otpCodigo}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot","verify"]
+            },
+            "description": "Prereq: ejecutar `Paso 1 — Solicitar por EMAIL` y obtener el OTP de `sec.codigos_otp` o del log. Sustituir `{{otpCodigo}}` con el código real. Si es correcto, devuelve `resetToken` (JWT HS256 de corta duración) que se guarda en la variable de colección para el Paso 3."
+          }
+        },
+        {
+          "name": "Paso 2 — OTP incorrecto (422 otp-invalido)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail otp-invalido', () => {",
+                  "  pm.expect(body.type).to.include('otp-invalido');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "  pm.expect(body.traceId).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preResetToken\": \"{{preResetToken}}\",\n  \"codigo\": \"000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot","verify"]
+            },
+            "description": "Código 000000 nunca coincide con el OTP real. Cada fallo incrementa `intentos` en sec.codigos_otp (persistido con noRollbackFor para sobrevivir al throw)."
+          }
+        },
+        {
+          "name": "Paso 2 — sesión inválida (422 reset-sesion-invalida)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail reset-sesion-invalida', () => {",
+                  "  pm.expect(body.type).to.include('reset-sesion-invalida');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preResetToken\": \"00000000-0000-0000-0000-000000000000\",\n  \"codigo\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","forgot","verify"]
+            },
+            "description": "UUID de sesión inexistente → ResetSesionInvalidaException → 422 reset-sesion-invalida."
+          }
+        },
+        {
+          "name": "Paso 3 — Cambiar contraseña (204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "pm.test('Body vacío', () => pm.expect(pm.response.text()).to.be.empty);",
+                  "",
+                  "pm.collectionVariables.set('preResetToken', '');",
+                  "pm.collectionVariables.set('resetToken', '');",
+                  "console.log('Variables de reset limpiadas. Usa la nueva contraseña para hacer login.');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resetToken\": \"{{resetToken}}\",\n  \"nuevaContrasena\": \"NuevaDemo2026!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","reset"]
+            },
+            "description": "Prereq: haber completado el Paso 2 y tener `{{resetToken}}` guardado. Cambia la contraseña, revoca la sesión de reset y responde 204 sin cuerpo. Hacer login de nuevo con la nueva contraseña para verificar."
+          }
+        },
+        {
+          "name": "Paso 3 — resetToken inválido (422 reset-sesion-invalida)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('ProblemDetail reset-sesion-invalida', () => {",
+                  "  pm.expect(body.type).to.include('reset-sesion-invalida');",
+                  "  pm.expect(body.status).to.eql(422);",
+                  "});",
+                  "",
+                  "pm.test('Encoding UTF-8 correcto', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('\\u00c3');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resetToken\": \"eyJhbGciOiJIUzI1NiJ9.fake.signature\",\n  \"nuevaContrasena\": \"NuevaDemo2026!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth","password","reset"]
+            },
+            "description": "JWT falso / expirado como resetToken → ResetSesionInvalidaException → 422 reset-sesion-invalida."
           }
         }
       ]
