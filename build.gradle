@@ -76,7 +76,8 @@ tasks.named('test') {
 
 bootRun {
 	jvmArgs = [
-		'-Duser.timezone=America/Lima'
+		'-Duser.timezone=America/Lima',
+		'-Dspring.profiles.active=local'
 	]
 }
 

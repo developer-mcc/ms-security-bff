@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import pe.com.mcc.security.application.auth.port.in.AuthenticateUseCase;
 import pe.com.mcc.security.application.auth.port.in.CambiarContrasenaCommand;
 import pe.com.mcc.security.application.auth.port.in.CambiarContrasenaUseCase;
+import pe.com.mcc.security.application.auth.port.in.CompletarMfaUseCase;
 import pe.com.mcc.security.application.auth.port.in.LogoutUseCase;
 import pe.com.mcc.security.application.auth.port.in.RefreshTokenUseCase;
 import pe.com.mcc.security.application.auth.port.in.ResetPasswordCommand;
@@ -30,6 +31,7 @@ import pe.com.mcc.security.application.auth.port.in.VerificarResetOtpUseCase;
 import pe.com.mcc.security.application.user.port.in.ObtenerPerfilUseCase;
 import pe.com.mcc.security.domain.user.model.PerfilUsuario;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.CambiarContrasenaRequest;
+import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.LoginMfaVerifyRequest;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.LoginRequest;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.PerfilResponse;
 import pe.com.mcc.security.infrastructure.adapter.in.web.auth.dto.RefreshRequest;
@@ -54,6 +56,7 @@ import pe.com.mcc.security.infrastructure.adapter.out.security.jwt.UserPrincipal
 public class AuthController {
 
   private final AuthenticateUseCase authenticate;
+  private final CompletarMfaUseCase completarMfa;
   private final RefreshTokenUseCase refreshToken;
   private final LogoutUseCase logout;
   private final SwitchBranchUseCase switchBranch;
@@ -65,11 +68,24 @@ public class AuthController {
   private final AuthDtoMapper mapper;
   private final HttpRequestContextResolver requestContext;
 
+  /**
+   * Autentica por contraseña. Sin MFA retorna 200 con tokens; con MFA retorna 202 con preAuthToken
+   * y canal para continuar en POST /auth/login/mfa/verify.
+   */
   @PostMapping("/login")
-  public ResponseEntity<TokenResponse> login(
+  public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest body, HttpServletRequest request) {
-    var command = mapper.toCommand(body, requestContext.resolveDispositivo(request));
-    var pair = authenticate.authenticate(command);
+    return mapper.toLoginResponse(
+        authenticate.authenticate(
+            mapper.toCommand(body, requestContext.resolveDispositivo(request))));
+  }
+
+  /** Segundo factor: verifica el OTP recibido por el canal preferido y emite los tokens finales. */
+  @PostMapping("/login/mfa/verify")
+  public ResponseEntity<TokenResponse> verifyMfa(
+      @Valid @RequestBody LoginMfaVerifyRequest body, HttpServletRequest request) {
+    var command = mapper.toCompletarMfaCommand(body, requestContext.resolveDispositivo(request));
+    var pair = completarMfa.completar(command);
     return ResponseEntity.ok(mapper.toResponse(pair));
   }
 

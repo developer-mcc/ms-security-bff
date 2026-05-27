@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import pe.com.mcc.security.application.auth.port.in.AuthenticateCommand;
 import pe.com.mcc.security.application.auth.port.in.AuthenticateUseCase;
 import pe.com.mcc.security.application.auth.port.in.RegistrarIntentoFallidoUseCase;
+import pe.com.mcc.security.application.auth.port.in.SolicitarMfaCommand;
+import pe.com.mcc.security.application.auth.port.in.SolicitarMfaUseCase;
 import pe.com.mcc.security.application.auth.port.out.PasswordEncoderPort;
 import pe.com.mcc.security.application.permission.port.in.BuildPermissionMapUseCase;
 import pe.com.mcc.security.application.shared.port.out.Clock;
@@ -19,8 +21,8 @@ import pe.com.mcc.security.domain.auth.event.LoginFailedEvent;
 import pe.com.mcc.security.domain.auth.event.LoginSuccessEvent;
 import pe.com.mcc.security.domain.auth.exception.InvalidCredentialsException;
 import pe.com.mcc.security.domain.auth.exception.UserBlockedException;
+import pe.com.mcc.security.domain.auth.model.AuthenticateResult;
 import pe.com.mcc.security.domain.permission.model.PermissionMap;
-import pe.com.mcc.security.domain.token.model.TokenPair;
 import pe.com.mcc.security.domain.user.model.SucursalUsuario;
 import pe.com.mcc.security.domain.user.model.Usuario;
 
@@ -41,12 +43,13 @@ public class AuthenticateService implements AuthenticateUseCase {
   private final BuildPermissionMapUseCase buildPermissionMap;
   private final IssueTokenUseCase issueToken;
   private final RegistrarIntentoFallidoUseCase registrarIntentoFallido;
+  private final SolicitarMfaUseCase solicitarMfa;
   private final EventPublisher eventPublisher;
   private final Clock clock;
 
   @Override
   @Transactional
-  public TokenPair authenticate(AuthenticateCommand command) {
+  public AuthenticateResult authenticate(AuthenticateCommand command) {
     String nombreUsuario = command.credentials().nombreUsuario();
 
     Usuario usuario =
@@ -68,6 +71,11 @@ public class AuthenticateService implements AuthenticateUseCase {
       registrarIntentoFallido.registrarFallo(usuario.id());
       publicarFallo(command, "PASSWORD_INVALIDO");
       throw new InvalidCredentialsException();
+    }
+
+    if (usuario.mfaHabilitado()) {
+      String ip = command.dispositivo() != null ? command.dispositivo().direccionIp() : null;
+      return solicitarMfa.solicitar(new SolicitarMfaCommand(usuario, ip));
     }
 
     Usuario actualizado = usuario.conLoginExitoso(clock.now());
@@ -104,7 +112,7 @@ public class AuthenticateService implements AuthenticateUseCase {
             command.dispositivo() != null ? command.dispositivo().direccionIp() : null,
             clock.nowInstant()));
 
-    return pair;
+    return new AuthenticateResult.TokenEmitido(pair);
   }
 
   private void publicarFallo(AuthenticateCommand command, String motivo) {

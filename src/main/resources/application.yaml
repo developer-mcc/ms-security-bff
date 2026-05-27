@@ -13,6 +13,8 @@ spring:
     url: jdbc:postgresql://localhost:5432/poc-security
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:Admin2024}
+    hikari:
+      connection-init-sql: "CREATE SCHEMA IF NOT EXISTS sec"
   jpa:
     hibernate:
       ddl-auto: create-drop
@@ -24,6 +26,7 @@ spring:
         default_schema: sec
         jdbc:
           time_zone: America/Lima  # binding JDBC de TIMESTAMP
+
   sql:
     init:
       # always: ejecuta schema.sql + data.sql en cada arranque.
@@ -38,9 +41,9 @@ spring:
     properties:
       mail:
         smtp:
-          auth: false
+          auth: ${MAIL_SMTP_AUTH:false}
           starttls:
-            enable: false
+            enable: ${MAIL_SMTP_STARTTLS:false}
 
 management:
   endpoints:

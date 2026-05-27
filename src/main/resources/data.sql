@@ -104,9 +104,9 @@ INSERT INTO sec.usuarios
      canal_otp_preferido, mfa_habilitado, estado, intentos_fallidos, contrasena_cambiada_en, creado_por, fecha_creacion) VALUES
     -- SUPER_ADMIN (sin empresa)
     ('00000000-0000-0000-0000-000000000001', NULL,
-     'superadmin', 'superadmin@demo.local',
+     'superadmin', 'mauricioccasanii7@gmail.com.pe',
      crypt('Demo2026!', gen_salt('bf', 10)),
-     'Super', 'Admin', '00000001', '999000001', 'EMAIL', TRUE, 'ACTIVO', 0, CURRENT_TIMESTAMP, 'SYSTEM', CURRENT_TIMESTAMP),
+     'Super', 'Admin', '00000001', '999000001', 'EMAIL', FALSE, 'ACTIVO', 0, CURRENT_TIMESTAMP, 'SYSTEM', CURRENT_TIMESTAMP),
 
     -- Botica San Juan
     ('11111111-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111',

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import pe.com.mcc.security.domain.auth.exception.ContactoNoRegistradoException;
 import pe.com.mcc.security.domain.auth.exception.InvalidCredentialsException;
+import pe.com.mcc.security.domain.auth.exception.PreAuthSesionInvalidaException;
 import pe.com.mcc.security.domain.auth.exception.ResetSesionInvalidaException;
 import pe.com.mcc.security.domain.auth.exception.SucursalNoAutorizadaException;
 import pe.com.mcc.security.domain.auth.exception.UserBlockedException;
@@ -87,6 +88,15 @@ public class GlobalExceptionHandler {
         HttpStatus.UNPROCESSABLE_ENTITY,
         "reset-sesion-invalida",
         "Sesión de reset inválida",
+        e.getMessage());
+  }
+
+  @ExceptionHandler(PreAuthSesionInvalidaException.class)
+  public ProblemDetail handlePreAuthSesionInvalida(PreAuthSesionInvalidaException e) {
+    return problem(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "pre-auth-sesion-invalida",
+        "Token MFA inválido o expirado",
         e.getMessage());
   }
 

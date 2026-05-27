@@ -36,10 +36,10 @@ public class OtpNotificationListener {
               buildCuerpo(event.codigoPlano(), event.proposito())));
     } catch (NotificacionFallidaException ex) {
       log.error(
-          "No se pudo notificar OTP al usuario {} por canal {}: {}",
+          "No se pudo notificar OTP al usuario {} por canal {}",
           event.usuarioId(),
           event.canal(),
-          ex.getMessage());
+          ex);
     }
   }
 

@@ -1,8 +1,11 @@
 package pe.com.mcc.security.infrastructure.config;
 
+import java.util.Map;
 import java.util.concurrent.ThreadPoolExecutor;
+import org.slf4j.MDC;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskDecorator;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -30,6 +33,7 @@ public class AsyncConfig {
     executor.setQueueCapacity(500);
     executor.setKeepAliveSeconds(60);
     executor.setThreadNamePrefix("sec-events-");
+    executor.setTaskDecorator(mdcPropagatingDecorator());
     // Si la cola se llena, el caller (hilo del listener) ejecuta la tarea —
     // preferible a perder eventos de auditoría.
     executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -37,5 +41,21 @@ public class AsyncConfig {
     executor.setAwaitTerminationSeconds(30);
     executor.initialize();
     return executor;
+  }
+
+  private static TaskDecorator mdcPropagatingDecorator() {
+    return task -> {
+      Map<String, String> context = MDC.getCopyOfContextMap();
+      return () -> {
+        try {
+          if (context != null) {
+            MDC.setContextMap(context);
+          }
+          task.run();
+        } finally {
+          MDC.clear();
+        }
+      };
+    };
   }
 }

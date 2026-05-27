@@ -45,7 +45,8 @@ public class SecurityConfig {
                     .accessDeniedHandler(accessDeniedHandler))
         .authorizeHttpRequests(
             auth ->
-                auth.requestMatchers(HttpMethod.POST, "/auth/login", "/auth/refresh")
+                auth.requestMatchers(
+                        HttpMethod.POST, "/auth/login", "/auth/login/mfa/verify", "/auth/refresh")
                     .permitAll()
                     .requestMatchers(
                         HttpMethod.POST, "/auth/password/forgot", "/auth/password/forgot/verify")

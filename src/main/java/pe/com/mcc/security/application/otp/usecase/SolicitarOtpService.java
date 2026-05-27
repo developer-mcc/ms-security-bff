@@ -55,7 +55,6 @@ public class SolicitarOtpService implements SolicitarOtpUseCase {
             command.direccionIp());
 
     otpRepository.guardar(otp);
-
     eventPublisher.publish(
         new OtpSolicitadoEvent(
             command.usuarioId(),
